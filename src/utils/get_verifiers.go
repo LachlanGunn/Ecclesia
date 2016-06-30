@@ -8,7 +8,7 @@ import (
 	"io/ioutil"
 	"os"
 
-	"relier/directory"
+	"requestor/directory"
 )
 
 func main() {

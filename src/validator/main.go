@@ -10,7 +10,7 @@ import (
 	"io/ioutil"
 	"os"
 
-	"relier/directory"
+	"requestor/directory"
 	"verifier/certificate"
 )
 

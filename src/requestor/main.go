@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"os"
 
-	"relier/directory"
+	"requestor/directory"
 )
 
 func main() {

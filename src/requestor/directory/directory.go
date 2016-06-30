@@ -9,7 +9,7 @@ import (
 	
 	"golang.org/x/crypto/ed25519"
 
-	"relier/randomset"
+	"requestor/randomset"
 )
 
 type Certificate struct {
