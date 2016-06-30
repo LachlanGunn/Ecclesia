@@ -65,6 +65,13 @@ func main() {
 	flag.Parse()
 
 	args := flag.Args()
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr,
+			"USAGE: read_directory [-k <verifiers>] <directory> "+
+			"<identity> <identity> ...\n")
+		os.Exit(1)
+	}
+
 	dirfile := args[0]
 
 	fh, err := os.Open(dirfile)
@@ -192,7 +199,10 @@ func main() {
 	fmt.Printf("\nShared random value: %s %s\n",
 		hex.EncodeToString(final_shared_random_value), valid_string)
 
-	fmt.Println("\nIdentity verifier sets:")
+	if len(args) >= 2 {
+		fmt.Println("\nIdentity verifier sets:")
+	}
+
 	for i := 1; i < len(args); i++ {
 		verifiers, err := randomset.RandomSubset(
 			final_shared_random_value,
