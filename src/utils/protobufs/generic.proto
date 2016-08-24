@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package protobufs;
+
+/*
+ * We would like the result value to be as resistant as possible to
+ * memory/transmission errors, even if most of the time it will be
+ * signed.
+ */
+enum Result {
+  RESULT_SUCCESS = 0;
+  RESULT_FAIL    = 0x7F;
+}
+
+message SignedMessage {
+  bytes public_key = 1;
+  bytes signature  = 2;
+  bytes data       = 3;
+}
+
+message ErrorResponse {
+  Result result = 1;
+  string reason = 2;
+}

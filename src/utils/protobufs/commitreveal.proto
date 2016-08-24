@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package protobufs;
+
+import "generic.proto";
+
+message VerifierCommit {
+  bytes  public_key   = 1;
+  string address      = 2;
+  string time         = 3;
+  bytes  commit_value = 4;
+}
+
+message VerifierReveal {
+  bytes public_key   = 1;
+  bytes reveal_value = 2;
+}
+
+message TimingStatus {
+  string current_time = 1;
+  string next_commit_distribution = 2;
+  string next_reveal = 3;
+  string next_publication = 4;
+}
+
+message DirectoryEntry {
+  SignedMessage verifier_commit = 1;
+  bytes         verifier_reveal = 2;
+}
+
+message Directory {
+  repeated DirectoryEntry directory_entries = 1;
+}
+
+message VerifierCommitList {
+  repeated SignedMessage verifier_commits = 1;
+}
+
+message DirectoryResponse {
+  oneof message {
+    ErrorResponse error = 1;
+    TimingStatus timing_status = 2;
+    VerifierCommitList verifier_commits = 3;
+    Directory directory = 4;
+  }
+}
