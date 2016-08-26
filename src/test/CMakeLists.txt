@@ -1,0 +1,1 @@
+ADD_GO_EXECUTABLE(write_structure write_structure.go)

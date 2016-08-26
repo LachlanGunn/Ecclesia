@@ -1,0 +1,1 @@
+ADD_GO_LIBRARY(protocol_common protocol_common.go)

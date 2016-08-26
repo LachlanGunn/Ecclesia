@@ -13,7 +13,11 @@ import (
 	"net/url"
 	"os"
 	"time"
+
+	"protobufs"
+
 	"golang.org/x/crypto/ed25519"
+	"github.com/golang/protobuf/proto"
 )
 
 type Verifier struct {
@@ -42,18 +46,18 @@ type VerifierReveal struct {
 	RevealValue string
 }
 
-func get_randomness() (string, string) {
-	bytes := make([]byte, 32)
-	n, _ := rand.Read(bytes)
-	if n != len(bytes) {
+func get_randomness() (string, []byte) {
+	reveal_bytes := make([]byte, 32)
+	n, _ := rand.Read(reveal_bytes)
+	if n != len(reveal_bytes) {
 		fmt.Fprintf(os.Stderr, "Could not obtain random bytes.\n")
 		os.Exit(1)
 	}
 
-	commit_bytes := sha256.Sum256(bytes)
+	commit_bytes := sha256.Sum256(reveal_bytes)
 	
 	return base64.StdEncoding.EncodeToString(commit_bytes[:]),
-	       base64.StdEncoding.EncodeToString(bytes)
+	       reveal_bytes //base64.StdEncoding.EncodeToString(bytes)
 }
 
 func get_directory_fingerprint(url string) ([]byte, error) {
@@ -98,12 +102,16 @@ func Register(secret_key ed25519.PrivateKey, address string, first bool) error {
 		return err
 	}
 
-	signature := base64.StdEncoding.EncodeToString(
-		ed25519.Sign(secret_key, verifier_object_json))
+	signature := ed25519.Sign(secret_key, verifier_object_json)
+	signed_commitment := protobufs.SignedMessage{
+		[]byte(public_key), signature, verifier_object_json}
+	commitment_encoded, err := proto.Marshal(&signed_commitment)
+	if err != nil {
+		return err
+	}
 
-	response, err := http.PostForm("http://localhost:8080/verifier/commit",
-		url.Values{"verifier_data" : {string(verifier_object_json)},
-			   "signature" : {signature}})
+	response, err := http.Post("http://localhost:8080/verifier/commit",
+		"application/octet-string", bytes.NewReader(commitment_encoded))
 	if err != nil {
 		return err
 	}
@@ -127,8 +135,8 @@ func Register(secret_key ed25519.PrivateKey, address string, first bool) error {
 		return errors.New(error_string)
 	}
 
-	reveal_request := VerifierReveal{public_key_encoded, reveal}
-	reveal_request_json, err := json.Marshal(reveal_request)
+	reveal_request := protobufs.VerifierReveal{[]byte(public_key), reveal}
+	reveal_request_json, err := proto.Marshal(&reveal_request)
 	if err != nil {
 		return err
 	}

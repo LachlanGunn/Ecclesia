@@ -17,9 +17,15 @@ import (
 	"sort"
 	"time"
 
+	"protobufs"
+	"shared/protocol_common"
+
 	"github.com/gin-gonic/gin"
+	"github.com/golang/protobuf/proto"
 	"golang.org/x/crypto/ed25519"
 )
+
+var _ = protobufs.VerifierCommit{}
 
 type VerifierCommit struct {
 	PublicKey   ed25519.PublicKey
@@ -42,9 +48,9 @@ type VerifierCommitList struct {
 }
 
 type VerifierRevealList struct {
-	Reveals       map[string]VerifierReveal
+	Reveals       map[string]protobufs.VerifierReveal
 	OwnerChannel  chan int
-	InsertChannel chan VerifierReveal
+	InsertChannel chan protobufs.VerifierReveal
 	Ready         chan int
 }
 
@@ -56,7 +62,7 @@ type CycleTimes struct {
 
 type DirectoryEntry struct {
 	Commit          VerifierCommit
-	Reveal          VerifierReveal
+	Reveal          protobufs.VerifierReveal
 }
 
 type SignedValue struct {
@@ -95,7 +101,7 @@ func (list *VerifierCommitList) Add(commit VerifierCommit,
 	return commit_cycle_times
 }
 
-func (list *VerifierRevealList) Add(reveal VerifierReveal) {
+func (list *VerifierRevealList) Add(reveal protobufs.VerifierReveal) {
 	<-list.OwnerChannel
 	list.Reveals[string(reveal.PublicKey)] = reveal
 	list.OwnerChannel<- 1	
@@ -112,7 +118,7 @@ func (entry *DirectoryEntry) MarshalJSON() ([]byte, error) {
 	}{
 		Commit:    entry.Commit.JSON,
 		Signature: entry.Commit.Signature,
-		Reveal:    entry.Reveal.RevealValue,
+		Reveal:    base64.StdEncoding.EncodeToString(entry.Reveal.RevealValue),
 		Alias:    (*Alias)(entry),
 	})
 }
@@ -139,8 +145,12 @@ func (entry *DirectoryEntry) UnmarshalJSON(data []byte) error {
 	entry.Commit.Signature = aux.Signature
 	entry.Commit.JSON = aux.Commit
 
-	entry.Reveal = VerifierReveal{
-		entry.Commit.PublicKey, aux.Reveal}
+	reveal_value, err := base64.StdEncoding.DecodeString(aux.Reveal)
+	if err != nil {
+		return err
+	}
+
+	entry.Reveal = protobufs.VerifierReveal{entry.Commit.PublicKey, reveal_value}
 
 	return nil
 }
@@ -229,9 +239,9 @@ func main() {
 	commits.OwnerChannel<- 1
 
 	reveals := VerifierRevealList{
-		make(map[string]VerifierReveal, 0),
+		make(map[string]protobufs.VerifierReveal, 0),
 		make(chan int, 1),
-		make(chan VerifierReveal, 100),
+		make(chan protobufs.VerifierReveal, 100),
 		make(chan int, 1)}
 	reveals.OwnerChannel<- 1
 	
@@ -276,53 +286,48 @@ func check_verifier_allowed(public_key ed25519.PublicKey,
 func add_verifier(c *gin.Context, list *VerifierCommitList,
 	          allowed_verifiers *map[string]bool,
  	          cycle_times *CycleTimes) {
-	verifier_data_json := c.PostForm("verifier_data")
-	signature_base64 := c.PostForm("signature")
 
-	// Before anything else we need to parse the JSON data
-	// in order to get the public key.
+	encoded_data, err := ioutil.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(500, gin.H{"result": "fail",
+			"reason": "failed to read request"})
+		return
+	}
+
+	signed_message, err := protocol_common.UnpackSignedData(
+		encoded_data, func(key ed25519.PublicKey) bool {
+			return check_verifier_allowed(
+				key, allowed_verifiers)
+		})
+	if err != nil {
+		c.JSON(400, gin.H{"result": "fail",
+			"reason": err.Error()})
+		return
+	}
+	
+	// We need to parse the JSON data to make sure that the
+	// public key has been signed.
 	var verifier_data VerifierCommit
-	err := json.Unmarshal([]byte(verifier_data_json), &verifier_data)
+	err = json.Unmarshal(signed_message.Data, &verifier_data)
 	if (err != nil) {
+		fmt.Println(string(encoded_data))
+
 		c.JSON(400, gin.H{"result": "fail",
 			"reason": "invalid JSON",
 			"error": err.Error(),
-			"input": verifier_data_json})
+			"input": signed_message.Data})
 		return
 	}
 
 	// Add the raw JSON and signature for later verification
-	verifier_data.JSON = []byte(verifier_data_json)
-	verifier_data.Signature, err =
-		base64.StdEncoding.DecodeString(signature_base64)
-	if err != nil {
-		c.JSON(400, gin.H{"result": "fail",
-			"reason": "unparseable signature"})
-		return
-	}
+	verifier_data.JSON = signed_message.Data
+	verifier_data.Signature = signed_message.Signature
 
-	// Next we check whether the verifier is allowed to submit.
-	if !check_verifier_allowed(verifier_data.PublicKey, allowed_verifiers) {
+	// Check whether the public key matches the one that we used
+	// to verify the signature.
+	if !bytes.Equal(verifier_data.PublicKey, signed_message.PublicKey) {
 		c.JSON(403, gin.H{"result": "fail",
-			"reason": "verifier not whitelisted"})
-		return
-	}
-
-	// Next we verify the signature.
-	signature, err := base64.StdEncoding.DecodeString(signature_base64)
-	if (err != nil || len(signature) != ed25519.SignatureSize) {
-		c.JSON(400, gin.H{"result": "fail",
-			"reason": "bad signature format"})
-		return
-	}
-
-	verification_result :=
-		ed25519.Verify(verifier_data.PublicKey,
-		               []byte(verifier_data_json),
-		               signature)
-
-	if (false == verification_result) {
-		c.JSON(400, gin.H{"result": "fail"})
+			"reason": "public keys in disagreement"})
 		return
 	}
 
@@ -359,8 +364,8 @@ func add_reveal(
 	// Parse the JSON data into a reveal struct.
 	reveal_data_json := c.PostForm("verifier_data")
 
-	reveal := VerifierReveal{}
-	err := json.Unmarshal([]byte(reveal_data_json), &reveal)
+	reveal := protobufs.VerifierReveal{}
+	err := proto.Unmarshal([]byte(reveal_data_json), &reveal)
 	if (nil != err) {
 		c.JSON(400, gin.H{"result": "fail", "reason": "bad json"})
 		return
@@ -388,15 +393,15 @@ func add_reveal(
 
 	// Next check that the reveal matches the commit.  It is because
 	// of this check that we don't need to authenticate.
-	parsed_reveal, err :=
-		base64.StdEncoding.DecodeString(reveal.RevealValue)
-	if nil != err {
-		c.JSON(400, gin.H{"result": "fail", "reason": "bad reveal"})
-		return
-	}
+	//parsed_reveal, err :=
+	//	base64.StdEncoding.DecodeString(reveal.RevealValue)
+	//if nil != err {
+	//	c.JSON(400, gin.H{"result": "fail", "reason": "bad reveal"})
+	//	return
+	//}
 
 	// Now hash and check the revealed value
-	expected_commit_binary := sha256.Sum256(parsed_reveal)
+	expected_commit_binary := sha256.Sum256(reveal.RevealValue)// parsed_reveal)
 	expected_commit_base64 :=
 		base64.StdEncoding.EncodeToString(expected_commit_binary[:])
 	if expected_commit_base64 != commit.CommitValue {
@@ -589,7 +594,7 @@ func goroutine_commit_reveal_publish_cycle(
 
 		// Empty the previous reveal list.
 		<-verifier_reveal_list.OwnerChannel
-		verifier_reveal_list.Reveals = make(map[string]VerifierReveal)
+		verifier_reveal_list.Reveals = make(map[string]protobufs.VerifierReveal)
 		verifier_reveal_list.OwnerChannel <- 1
 
 		// Indicate that we are ready to accept revelations.

@@ -9,6 +9,7 @@ message VerifierCommit {
   string address      = 2;
   string time         = 3;
   bytes  commit_value = 4;
+  bytes  directory_fingerprint = 5;
 }
 
 message VerifierReveal {

@@ -1,0 +1,2 @@
+ADD_SUBDIRECTORY(protobufs)
+ADD_SUBDIRECTORY(protocol_common)
