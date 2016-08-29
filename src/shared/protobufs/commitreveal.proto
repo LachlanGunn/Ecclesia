@@ -30,7 +30,10 @@ message DirectoryEntry {
 }
 
 message Directory {
-  repeated DirectoryEntry directory_entries = 1;
+  string time = 1;
+  string validity = 2;
+  bytes last_directory = 3;
+  repeated DirectoryEntry directory_entries = 4;
 }
 
 message VerifierCommitList {

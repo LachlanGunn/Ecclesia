@@ -7,14 +7,16 @@ import (
 	"fmt"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"io/ioutil"
 	"os"
 	"time"
 	
 	"golang.org/x/crypto/ed25519"
+	"github.com/golang/protobuf/proto"
 
+	"protobufs"
 	"requestor/randomset"
+	"shared/protocol_common"
 )
 
 type Certificate struct {
@@ -88,28 +90,28 @@ func main() {
 		os.Exit(1)
 	}
 		
-	var directory_container SignedDirectory
-	err = json.Unmarshal(data, &directory_container)
+	directory_container, err := protocol_common.UnpackSignedData(
+		data, func(ed25519.PublicKey)bool{return true})
 	if err != nil {
-		fmt.Fprintf(os.Stderr,
-			"Could not parse directory file: %s\n", err.Error())
-		os.Exit(1)
+		switch err.(type) {
+		case protocol_common.BadSignatureError:
+			fmt.Fprintln(os.Stderr, "Signature: invalid")
+		default:
+			fmt.Fprintf(os.Stderr,
+				"Could not parse directory file: %s\n",
+				err.Error())
+			os.Exit(1)
+		}
+	} else {
+		fmt.Println("Signature: invalid")
 	}
 
 	fmt.Printf("Directory public key: %s\n",
 		base64.StdEncoding.EncodeToString(
 			directory_container.PublicKey))
 
-	signature_valid := ed25519.Verify(directory_container.PublicKey,
-		directory_container.Directory, directory_container.Signature)
-	if signature_valid {
-		fmt.Println("Signature: valid")
-	} else {
-		fmt.Println("Signature: invalid")
-	}
-
-	var directory DirectoryBody
-	err = json.Unmarshal(directory_container.Directory, &directory)
+	var directory protobufs.Directory
+	err = proto.Unmarshal(directory_container.Data, &directory)
 	if err != nil {
 		fmt.Fprintf(os.Stderr,
 			"Could not parse directory body: %s\n", err.Error())
@@ -117,26 +119,47 @@ func main() {
 	}
 
 	fmt.Printf("Valid %s from %s\n",
-		directory.Validity.String(),
-		directory.Time.Format("2006-01-02 15:04"))
+		directory.Validity,
+		directory.Time)
 
 
-	fmt.Printf("Found %d verifiers.\n", len(directory.Verifiers))
+	fmt.Printf("Found %d verifiers.\n", len(directory.DirectoryEntries))
 
-	var verifier_commit_prev Verifier
+	var verifier_commit_prev protobufs.VerifierCommit
 
 	hash_context := sha256.New()
 	reveal_valid := true
-	for index, verifier_json := range directory.Verifiers {
-		var verifier_commit Verifier
-		err = json.Unmarshal(verifier_json.Commit, &verifier_commit)
+	for index, directory_entry := range directory.DirectoryEntries {
+
+		err := protocol_common.VerifySignedData(
+			*directory_entry.VerifierCommit,
+			func(key ed25519.PublicKey) bool {
+				return true
+			})
+
+		signature_valid := true
 		if err != nil {
-			fmt.Println("Verifier: invalid")
-			reveal_valid = false
+			switch err.(type) {
+			case protocol_common.BadSignatureError:
+				signature_valid = false
+			default:
+				fmt.Printf("Signature package: invalid (%s)\n",
+					err.Error())
+				
+				reveal_valid = false
+				continue
+			}
 		}
 
-		signature_valid := ed25519.Verify(verifier_commit.PublicKey,
-			verifier_json.Commit, verifier_json.Signature)
+		var verifier_commit protobufs.VerifierCommit
+		err = proto.Unmarshal(
+			directory_entry.VerifierCommit.Data,
+			&verifier_commit)
+		if err != nil {
+			fmt.Println("Verifier: Invalid")
+			reveal_valid = false
+			continue
+		}
 
 		fmt.Println()
 		fmt.Println(verifier_commit.Address,
@@ -166,7 +189,7 @@ func main() {
 			fmt.Println("    Reveal: invalid")
 			reveal_valid = false
 		} else {
-			hashed_reveal := sha256.Sum256(verifier_json.Reveal)
+			hashed_reveal := sha256.Sum256(directory_entry.VerifierReveal)
 			var valid_string string
 			if bytes.Equal(hashed_reveal[:],
 				verifier_commit.CommitValue) {
@@ -176,13 +199,13 @@ func main() {
 				reveal_valid = false
 			}
 			fmt.Printf("    Reveal: %s... %s\n",
-				hex.EncodeToString(verifier_json.Reveal[0:10]),
+				hex.EncodeToString(directory_entry.VerifierReveal[0:10]),
 				valid_string)
 			fmt.Printf("    Commit: %s...\n",
 				hex.EncodeToString(
 					verifier_commit.CommitValue[0:10]))
 
-			hash_context.Write(verifier_json.Reveal)
+			hash_context.Write(directory_entry.VerifierReveal)
 		}
 
 		verifier_commit_prev = verifier_commit
@@ -207,7 +230,7 @@ func main() {
 		verifiers, err := randomset.RandomSubset(
 			final_shared_random_value,
 			[]byte(args[i]),
-			len(directory.Verifiers),
+			len(directory.DirectoryEntries),
 			*k)
 		if err != nil {
 			fmt.Printf("    %s: error (%s)\n", args[i], err.Error())

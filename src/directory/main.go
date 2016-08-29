@@ -7,8 +7,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -28,12 +26,12 @@ import (
 var _ = protobufs.VerifierCommit{}
 
 type VerifierCommit struct {
-	PublicKey   ed25519.PublicKey
-	Address     string
-	Time        time.Time
-	CommitValue string
-	JSON        []byte
-	Signature   []byte
+	PublicKey            ed25519.PublicKey
+	Address              string
+	Time                 time.Time
+	CommitValue          []byte
+	DirectoryFingerprint []byte
+	SignedValue          *protobufs.SignedMessage
 }
 
 type VerifierReveal struct {
@@ -70,7 +68,7 @@ type SignedValue struct {
 	Signature []byte
 }
 
-type Directory []DirectoryEntry
+type Directory []*protobufs.DirectoryEntry
 
 // Implement the sort interface for slice DirectoryEntry
 func (slice Directory) Len() int {
@@ -79,7 +77,8 @@ func (slice Directory) Len() int {
 
 func (slice Directory) Less(i, j int) bool {
 	return bytes.Compare(
-		slice[i].Commit.PublicKey, slice[j].Commit.PublicKey) < 0
+		slice[i].VerifierCommit.PublicKey,
+		slice[j].VerifierCommit.PublicKey) < 0
 }
 
 func (slice Directory) Swap(i, j int) {
@@ -105,54 +104,6 @@ func (list *VerifierRevealList) Add(reveal protobufs.VerifierReveal) {
 	<-list.OwnerChannel
 	list.Reveals[string(reveal.PublicKey)] = reveal
 	list.OwnerChannel<- 1	
-}
-
-// Implement JSON marshalling and unmarshalling for directory entries
-func (entry *DirectoryEntry) MarshalJSON() ([]byte, error) {
-	type Alias DirectoryEntry
-	return json.Marshal(&struct {
-		Commit    []byte
-		Signature []byte
-		Reveal    string
-		*Alias
-	}{
-		Commit:    entry.Commit.JSON,
-		Signature: entry.Commit.Signature,
-		Reveal:    base64.StdEncoding.EncodeToString(entry.Reveal.RevealValue),
-		Alias:    (*Alias)(entry),
-	})
-}
-
-func (entry *DirectoryEntry) UnmarshalJSON(data []byte) error {
-	type Alias DirectoryEntry
-	aux := &struct {
-		Commit    []byte
-		Signature []byte
-		Reveal    string
-		*Alias
-	}{
-		Alias: (*Alias)(entry),
-	}
-
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-
-	if err := json.Unmarshal(aux.Commit, &entry.Commit); err != nil {
-		return err
-	}
-
-	entry.Commit.Signature = aux.Signature
-	entry.Commit.JSON = aux.Commit
-
-	reveal_value, err := base64.StdEncoding.DecodeString(aux.Reveal)
-	if err != nil {
-		return err
-	}
-
-	entry.Reveal = protobufs.VerifierReveal{entry.Commit.PublicKey, reveal_value}
-
-	return nil
 }
 
 // Determine whether or not we are in the reveal phase.
@@ -305,23 +256,32 @@ func add_verifier(c *gin.Context, list *VerifierCommitList,
 		return
 	}
 	
-	// We need to parse the JSON data to make sure that the
-	// public key has been signed.
-	var verifier_data VerifierCommit
-	err = json.Unmarshal(signed_message.Data, &verifier_data)
+	// Now we parse the commitment data.
+	var raw_commit protobufs.VerifierCommit
+	err = proto.Unmarshal(signed_message.Data, &raw_commit)
 	if (err != nil) {
-		fmt.Println(string(encoded_data))
-
 		c.JSON(400, gin.H{"result": "fail",
-			"reason": "invalid JSON",
+			"reason": "invalid commitment",
 			"error": err.Error(),
 			"input": signed_message.Data})
 		return
 	}
 
-	// Add the raw JSON and signature for later verification
-	verifier_data.JSON = signed_message.Data
-	verifier_data.Signature = signed_message.Signature
+	// Convert the protobuf structure to our internal type.
+	// We need to parse the date first though.
+	timestamp, err := time.Parse(time.RFC3339, raw_commit.Time)
+	if err != nil {
+		c.JSON(400, gin.H{"result": "fail",
+			"reason": "time failed to parse"})
+		return
+	}
+	verifier_data := VerifierCommit{
+		PublicKey:   raw_commit.PublicKey,
+		Address:     raw_commit.Address,
+		Time:        timestamp,
+		CommitValue: raw_commit.CommitValue,
+		DirectoryFingerprint: raw_commit.DirectoryFingerprint,
+		SignedValue: signed_message}
 
 	// Check whether the public key matches the one that we used
 	// to verify the signature.
@@ -393,22 +353,13 @@ func add_reveal(
 
 	// Next check that the reveal matches the commit.  It is because
 	// of this check that we don't need to authenticate.
-	//parsed_reveal, err :=
-	//	base64.StdEncoding.DecodeString(reveal.RevealValue)
-	//if nil != err {
-	//	c.JSON(400, gin.H{"result": "fail", "reason": "bad reveal"})
-	//	return
-	//}
-
-	// Now hash and check the revealed value
-	expected_commit_binary := sha256.Sum256(reveal.RevealValue)// parsed_reveal)
-	expected_commit_base64 :=
-		base64.StdEncoding.EncodeToString(expected_commit_binary[:])
-	if expected_commit_base64 != commit.CommitValue {
+	expected_commit_binary := sha256.Sum256(reveal.RevealValue)
+	if !bytes.Equal(expected_commit_binary[:], commit.CommitValue) {
 		c.JSON(403, gin.H{"result": "fail", "reason": "bad reveal"})
 		return
 	}
 
+	fmt.Fprintf(os.Stderr, "Adding reveal\n");
 	reveals.InsertChannel <- reveal
 
 	c.JSON(200, gin.H{"result": "success"})
@@ -416,16 +367,22 @@ func add_reveal(
 
 func list_verifiers(c *gin.Context, list *VerifierCommitList) {
 	<-list.OwnerChannel
+	defer func(){list.OwnerChannel<- 1}()
 
-	verifiers := make([]SignedValue, len(list.Verifiers))
+	verifiers := make([][]byte, len(list.Verifiers))
 	i := 0
 	for _, k := range list.Verifiers {
-		verifiers[i] = SignedValue{k.JSON, k.Signature}
+		encoded_commit, err := proto.Marshal(k.SignedValue)
+		if err != nil {
+			c.JSON(500, gin.H{"result": "fail",
+				"reason":"marshalling error"})
+			return
+		}
+		verifiers[i] = encoded_commit
 		i++
 	}
 	c.JSON(200, verifiers)
 	
-	list.OwnerChannel<- 1
 }
 
 //
@@ -467,10 +424,10 @@ func generate_verifier_list(
 	i := 0
 	for public_key, _ := range verifier_reveal_list.Reveals {
 		commit := verifier_commit_list.Verifiers[public_key]
-		directory[i].Commit = commit
 		reveal, found := verifier_reveal_list.Reveals[public_key]
 		if found {
-			directory[i].Reveal = reveal
+			directory[i] = &protobufs.DirectoryEntry{
+				commit.SignedValue, reveal.RevealValue}
 		}
 		i++
 	}
@@ -479,13 +436,11 @@ func generate_verifier_list(
 
 	sort.Sort(directory)
 	dir_timestamp := time.Now()
-	result, err := json.Marshal(struct{
-		Verifiers     Directory
-		LastDirectory string
-		Time          time.Time
-		Validity      time.Duration
-	}{directory, hex.EncodeToString(old_fingerprint[:]), dir_timestamp,
-		validity})
+	result, err := proto.Marshal(&protobufs.Directory{
+		dir_timestamp.Format(time.RFC3339),
+		validity.String(),
+		old_fingerprint[:],
+		directory})
 
 	if err != nil {
 		return nil, dir_timestamp, err
@@ -493,11 +448,8 @@ func generate_verifier_list(
 
 	signature := ed25519.Sign(secret_key, result)
 
-	signed_directory, err := json.Marshal(struct{
-		Directory []byte
-		PublicKey []byte
-		Signature []byte
-	}{result, []byte(public_key), signature})
+	signed_directory, err := proto.Marshal(&protobufs.SignedMessage{
+		[]byte(public_key), signature, result})
 
 	return signed_directory, dir_timestamp, err
 }
@@ -590,7 +542,8 @@ func goroutine_commit_reveal_publish_cycle(
 
 		// The revelation phase.
 		<-tick_channel
-		fmt.Println("Accepting revealed values.")
+		fmt.Printf("Accepting revealed values (%d).\n",
+			len(verifier_commit_list.Verifiers))
 
 		// Empty the previous reveal list.
 		<-verifier_reveal_list.OwnerChannel
@@ -602,7 +555,9 @@ func goroutine_commit_reveal_publish_cycle(
 		
 		// Publication of the commits.
 		<-tick_channel
-		fmt.Println("Publishing directory.")
+		fmt.Printf("Publishing directory (%d/%d).\n",
+			len(verifier_reveal_list.Reveals),
+			len(verifier_commit_list.Verifiers))
 
 		// Indicate that the reveal window is over.
 		// FIXME: Have we locked in the right order?

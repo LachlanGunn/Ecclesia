@@ -65,7 +65,7 @@ function(PROTOBUF_GENERATE_GO SRCS)
       OUTPUT ${${SRCS}}
       COMMAND  ${Protobuf_PROTOC_EXECUTABLE}
       ARGS --go_out ${PBGG_OUTDIR} --proto_path ${CMAKE_CURRENT_SOURCE_DIR} ${_protobuf_include_path} ${protos}
-      DEPENDS ${ABS_FIL} ${Protobuf_PROTOC_EXECUTABLE}
+      DEPENDS ${protos} ${Protobuf_PROTOC_EXECUTABLE}
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
       COMMENT "Running Go protocol buffer compiler on ${FIL}"
       VERBATIM )

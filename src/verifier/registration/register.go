@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"protobufs"
+	"shared/protocol_common"
 
 	"golang.org/x/crypto/ed25519"
 	"github.com/golang/protobuf/proto"
@@ -46,7 +46,7 @@ type VerifierReveal struct {
 	RevealValue string
 }
 
-func get_randomness() (string, []byte) {
+func get_randomness() ([]byte, []byte) {
 	reveal_bytes := make([]byte, 32)
 	n, _ := rand.Read(reveal_bytes)
 	if n != len(reveal_bytes) {
@@ -56,8 +56,7 @@ func get_randomness() (string, []byte) {
 
 	commit_bytes := sha256.Sum256(reveal_bytes)
 	
-	return base64.StdEncoding.EncodeToString(commit_bytes[:]),
-	       reveal_bytes //base64.StdEncoding.EncodeToString(bytes)
+	return commit_bytes[:], reveal_bytes
 }
 
 func get_directory_fingerprint(url string) ([]byte, error) {
@@ -80,8 +79,8 @@ func Register(secret_key ed25519.PrivateKey, address string, first bool) error {
 
 	public_key := secret_key.Public().(ed25519.PublicKey)
 	
-	public_key_encoded :=
-		base64.StdEncoding.EncodeToString([]byte(public_key))
+	//public_key_encoded :=
+	//	base64.StdEncoding.EncodeToString([]byte(public_key))
 
 	commit, reveal := get_randomness()
 
@@ -91,13 +90,13 @@ func Register(secret_key ed25519.PrivateKey, address string, first bool) error {
 		return err
 	}
 
-	verifier_object := Verifier{
-		public_key_encoded,
+	verifier_object := protobufs.VerifierCommit{
+		public_key,
 		address,
-		time.Now(),
+		time.Now().Format(time.RFC3339),
 		commit,
 		fingerprint}
-	verifier_object_json, err := json.Marshal(verifier_object)
+	verifier_object_json, err := proto.Marshal(&verifier_object)
 	if err != nil {
 		return err
 	}
@@ -156,7 +155,7 @@ func Register(secret_key ed25519.PrivateKey, address string, first bool) error {
 		return err
 	}
 
-	var registrations []SignedValue
+	var registrations [][]byte
 	err = json.Unmarshal(body, &registrations)
 	if err != nil {
 		return err
@@ -164,7 +163,7 @@ func Register(secret_key ed25519.PrivateKey, address string, first bool) error {
 
 	our_position := len(registrations)
 	for i := range registrations {
-		if bytes.Equal(registrations[i].JSON, verifier_object_json) {
+		if bytes.Equal(registrations[i], commitment_encoded) {
 			our_position = i
 			break
 		}
@@ -177,9 +176,10 @@ func Register(secret_key ed25519.PrivateKey, address string, first bool) error {
 
 	our_published_commit := registrations[our_position]
 
-	if !ed25519.Verify(public_key,
-		our_published_commit.JSON, our_published_commit.Signature) {
-			
+	_, err = protocol_common.UnpackSignedData(
+		our_published_commit,
+		func(k ed25519.PublicKey)bool{return true})
+	if err != nil {
 		return errors.New("Published commit did not validate.")
 	}
 
