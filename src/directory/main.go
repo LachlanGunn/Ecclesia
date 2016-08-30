@@ -459,7 +459,7 @@ func generate_verifier_list(
 //
 func store_directory(data []byte, timestamp time.Time, directory string) error {
 	file_path := path.Join(directory, timestamp.Format(
-		"2006-01-02T150405-0700")) + ".json"
+		"2006-01-02T150405-0700")) + ".dir"
 	fmt.Println(file_path)
 	fh, err := os.OpenFile(file_path, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
