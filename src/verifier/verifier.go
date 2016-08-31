@@ -16,21 +16,37 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/Sirupsen/logrus"
 	"golang.org/x/crypto/ed25519"
 )
+
+var log = logrus.New()
 
 func main() {
 	secret    := flag.String("key", "", "secret key input file")
 	bind      := flag.String("bind", ":8081", "bind address/port")
 	advertise := flag.String("advertise", "", "advertised address/port")
+	novalidate:= flag.Bool("novalidate", false, "do not validate certificates")
+	debug := flag.Bool("debug", false, "Log debugging information.")
+	quiet := flag.Bool("quiet", false, "Only log errors.  Overrides -debug.")
 	flag.Parse()
+
+	if *debug == true {
+		log.Level = logrus.DebugLevel
+	}
+
+	if *quiet == true {
+		log.Level = logrus.ErrorLevel
+	}
+
 	
 	secret_key := get_keys(*secret)
 
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
 
 	r.POST("/verify", func(c *gin.Context) {
-		certificate_report(c, secret_key)
+		certificate_report(c, secret_key, *novalidate)
 	})
 
 	if *advertise == "" {
@@ -50,40 +66,62 @@ func get_keys(secret string) ed25519.PrivateKey {
 		os.Exit(1)
 	}
 
+	logging_context := logrus.Fields{
+		"KeyFile": secret,
+	}
+
 	fh_secret, error := os.OpenFile(secret, os.O_RDONLY|os.O_CREATE, 0600)
 	if error != nil {
-		fmt.Fprintf(os.Stderr, "Could not open %s\n", secret)
-		os.Exit(1)
+		logging_context["Error"] = error
+		log.WithFields(logging_context).Fatal(
+			"Failed to open keyfile.")
 	}
 	defer fh_secret.Close()
 
 	secret_key_bytes, err := ioutil.ReadAll(fh_secret)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not read secret key.\n")
-		os.Exit(1)
+		logging_context["Error"] = err
+		log.WithFields(logging_context).Fatal(
+			"Failed to read secret key.")
 	}
 
 	secret_key_bytes_decoded, err :=
 		base64.StdEncoding.DecodeString(string(secret_key_bytes))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not decode secret key: %s\n",
-			err.Error())
+		logging_context["Error"] = err
+		log.WithFields(logging_context).Fatal(
+			"Could not decode secret key.")
 	}
 
 	return ed25519.PrivateKey(secret_key_bytes_decoded)
 }
 
-func certificate_report(c *gin.Context, secret_key ed25519.PrivateKey) {
+func certificate_report(c *gin.Context, secret_key ed25519.PrivateKey,
+	novalidate bool) {
+
+	logging_context := logrus.Fields{
+		"ClientIP": c.ClientIP(),
+	}
+
 	host := c.PostForm("host")
 	if host == "" {
-		c.String(400, "")
+		c.JSON(400, gin.H{"result": "failure",
+			"reason": "no host provided"})
+		log.WithFields(logging_context).Error(
+			"certificate_report: No host provided.")
 		return
 	}
+
+	logging_context["HostToVerify"] = host
 	
-	certificate, err := certificate.GetCertificate(host)
+	certificate, err := certificate.GetCertificate(host, novalidate)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
-		os.Exit(1)
+		logging_context["Error"] = err
+		log.WithFields(logging_context).Error(
+			"certificate_report: Certificate acquisition failed.")
+		c.JSON(500, gin.H{"result": "failure",
+			"reason": "failed to obtain valid certificate"})
+		return
 	}
 
 	fingerprint := sha1.Sum(certificate.Raw)
@@ -92,9 +130,6 @@ func certificate_report(c *gin.Context, secret_key ed25519.PrivateKey) {
 	fingerprint_sha256 := sha256.Sum256(certificate.Raw)
 	fingerprint_sha256_hex := hex.EncodeToString(fingerprint_sha256[:])
 	
-	fmt.Printf("%s ... (%d -> %d)\n", fingerprint_hex,
-		len(certificate.Raw), len(fingerprint))
-
 	certificate_contents_json, err := json.Marshal(struct{
 		Time time.Time
 		Host string
@@ -109,23 +144,26 @@ func certificate_report(c *gin.Context, secret_key ed25519.PrivateKey) {
 		ed25519.Sign(secret_key, certificate_contents_json)})
 
 	c.Data(200, "application/json", certificate_json)
+	log.WithFields(logging_context).Info(
+		"certificate_report: Issued certificate.")
 }
 
-func goroutine_registration(secret_key ed25519.PrivateKey,
+func goroutine_registration(
+	secret_key ed25519.PrivateKey,
 	bind_address string) {
 
 	first := true
 	
 	for {
-		err := registration.Register(secret_key, bind_address, first)
+		err := registration.Register(
+			secret_key, bind_address, first, log)
 		first = false
 
 		if err != nil {
-			fmt.Fprintf(os.Stderr,
-				"Registration error: %s\n", err.Error())
+			log.WithFields(logrus.Fields{
+				"Error": err,
+			}).Error("Registration error.")
 			time.Sleep(5*time.Second)
-		} else {
-			fmt.Fprintf(os.Stderr, "Successfully registered.\n")
 		}
 	}
 }

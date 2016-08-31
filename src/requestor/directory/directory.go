@@ -8,8 +8,11 @@ import (
 	"time"
 	
 	"golang.org/x/crypto/ed25519"
+	"github.com/golang/protobuf/proto"
 
+	"protobufs"
 	"requestor/randomset"
+	"shared/protocol_common"
 )
 
 type Certificate struct {
@@ -99,70 +102,83 @@ func ParseCertificate(data []byte, key ed25519.PublicKey) (Certificate,error) {
 	return certificate, nil
 }
 
-func (output *Directory) UnmarshalJSON(data []byte) error {
-	var directory_container signedDirectory
-	err := json.Unmarshal(data, &directory_container)
+func ParseDirectory(data []byte) (Directory, error) {
+	output := Directory{}
+
+	directory_container, err := protocol_common.UnpackSignedData(
+		data, func(ed25519.PublicKey)bool{return true})
 	if err != nil {
-		return errors.New("Unparseable outer container")
+		return output, errors.New("Invalid directory")
 	}
 
-	signature_valid := ed25519.Verify(directory_container.PublicKey,
-		directory_container.Directory, directory_container.Signature)
-	if !signature_valid {
-		return errors.New("Invalid directory signature")
-	}
-
-	var directory directoryBody
-	err = json.Unmarshal(directory_container.Directory, &directory)
+	var directory protobufs.Directory
+	err = proto.Unmarshal(directory_container.Data, &directory)
 	if err != nil {
-		return errors.New("Unparseable directory body")
+		return output, errors.New("Unparseable directory body")
 	}
 
-	output.Validity  = directory.Validity
-	output.Time      = directory.Time
-	output.Verifiers = make([]Verifier, len(directory.Verifiers))
+	output.Validity, err = time.ParseDuration(directory.Validity)
+	if err != nil {
+		return output, errors.New("validity parsing failed")
+	}
 
-	var verifier_commit_prev verifierCommitBody
+	output.Time, err = time.Parse(time.RFC3339, directory.Time)
+	if err != nil {
+		return output, errors.New("time parsing failed")
+	}
+	output.Verifiers = make([]Verifier, len(directory.DirectoryEntries))
+
+	var verifier_commit_prev protobufs.VerifierCommit
 	hash_context := sha256.New()
-	for index, verifier_json := range directory.Verifiers {
-		var verifier_commit verifierCommitBody
-		err = json.Unmarshal(verifier_json.Commit, &verifier_commit)
+	for index, directory_entry := range directory.DirectoryEntries {
+		if directory_entry.VerifierCommit == nil {
+			return output, errors.New("invalid verifier: no commit")
+		}
+		err = protocol_common.VerifySignedData(
+			*directory_entry.VerifierCommit,
+			func(key ed25519.PublicKey)bool{return true})
 		if err != nil {
-			return errors.New("Unparseable verifier")
+			return output, errors.New("invalid verifier")
 		}
 
-		signature_valid := ed25519.Verify(verifier_commit.PublicKey,
-			verifier_json.Commit, verifier_json.Signature)
-
 		if index > 0 {
-			if bytes.Compare(verifier_commit.PublicKey,
+			if bytes.Compare(directory_entry.VerifierCommit.PublicKey,
 				verifier_commit_prev.PublicKey) < 0 {
 
-				return errors.New("Verifiers out of order")
+				return output, errors.New("Verifiers out of order")
 			}
 		}
 
-		if !signature_valid {
-			return errors.New("Invalid verifier signature")
+		var verifier_commit protobufs.VerifierCommit
+		err = proto.Unmarshal(
+			directory_entry.VerifierCommit.Data,
+			&verifier_commit)
+		if err != nil {
+			return output, errors.New("invalid verifier")
 		}
 
-		hashed_reveal := sha256.Sum256(verifier_json.Reveal)
+		hashed_reveal := sha256.Sum256(directory_entry.VerifierReveal)
 		if !bytes.Equal(hashed_reveal[:], verifier_commit.CommitValue) {
-			return errors.New("Invalid randomness reveal")
+			return output, errors.New("Invalid randomness reveal")
 		}
 
-		hash_context.Write(verifier_json.Reveal)
+		hash_context.Write(directory_entry.VerifierReveal)
 
-		output.Verifiers[index].PublicKey = verifier_commit.PublicKey
+		output.Verifiers[index].PublicKey =
+			directory_entry.VerifierCommit.PublicKey
 		output.Verifiers[index].Address = verifier_commit.Address
-		output.Verifiers[index].Time = verifier_commit.Time
+		output.Verifiers[index].Time, err =
+			time.Parse(time.RFC3339, verifier_commit.Time)
+		if err != nil {
+			return output, errors.New("time parsing failed")
+		}
 
 		verifier_commit_prev = verifier_commit
 	}
 
 	output.RandomValue = hash_context.Sum(nil)
 
-	return nil
+	return output, nil
 }
 
 func (directory *Directory) RandomVerifiers(

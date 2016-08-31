@@ -17,6 +17,7 @@ import (
 	"shared/protocol_common"
 
 	"golang.org/x/crypto/ed25519"
+	"github.com/Sirupsen/logrus"
 	"github.com/golang/protobuf/proto"
 )
 
@@ -75,13 +76,11 @@ func get_directory_fingerprint(url string) ([]byte, error) {
 	return fingerprint[:], nil
 }
 
-func Register(secret_key ed25519.PrivateKey, address string, first bool) error {
+func Register(secret_key ed25519.PrivateKey, address string, first bool,
+	log *logrus.Logger) error {
 
 	public_key := secret_key.Public().(ed25519.PublicKey)
 	
-	//public_key_encoded :=
-	//	base64.StdEncoding.EncodeToString([]byte(public_key))
-
 	commit, reveal := get_randomness()
 
 	fingerprint, err := get_directory_fingerprint(
@@ -114,6 +113,7 @@ func Register(secret_key ed25519.PrivateKey, address string, first bool) error {
 	if err != nil {
 		return err
 	}
+	log.Info("Sent commitment")
 
 	body, err := ioutil.ReadAll(response.Body)
 	response.Body.Close()
@@ -155,29 +155,35 @@ func Register(secret_key ed25519.PrivateKey, address string, first bool) error {
 		return err
 	}
 
-	var registrations [][]byte
-	err = json.Unmarshal(body, &registrations)
+	var registrations protobufs.VerifierCommitList
+	err = proto.Unmarshal(body, &registrations)
 	if err != nil {
 		return err
 	}
 
-	our_position := len(registrations)
-	for i := range registrations {
-		if bytes.Equal(registrations[i], commitment_encoded) {
-			our_position = i
-			break
+	our_position := len(registrations.VerifierCommits)
+	for i := range registrations.VerifierCommits {
+		if registrations.VerifierCommits[i] == nil {
+			return errors.New("invalid verifier in list")
+		}
+		if protocol_common.Equal(
+			*registrations.VerifierCommits[i],
+			signed_commitment) {
+
+				our_position = i
+				break
 		}
 	}
 
-	if our_position == len(registrations) {
+	if our_position == len(registrations.VerifierCommits) {
 		return errors.New("Commit did not appear in published list.")
 	}
 
 
-	our_published_commit := registrations[our_position]
+	our_published_commit := registrations.VerifierCommits[our_position]
 
-	_, err = protocol_common.UnpackSignedData(
-		our_published_commit,
+	err = protocol_common.VerifySignedData(
+		*our_published_commit,
 		func(k ed25519.PublicKey)bool{return true})
 	if err != nil {
 		return errors.New("Published commit did not validate.")
@@ -189,6 +195,7 @@ func Register(secret_key ed25519.PrivateKey, address string, first bool) error {
 
 	response, err = http.PostForm("http://localhost:8080/verifier/reveal",
 		url.Values{"verifier_data" : {string(reveal_request_json)}})
+	log.Info("Revealed committed value")
 
 	if err != nil {
 		return err

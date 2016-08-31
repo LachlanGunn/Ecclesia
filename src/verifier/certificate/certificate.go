@@ -5,8 +5,10 @@ import (
 	"crypto/x509"
 )
 
-func GetCertificate(address string) (*x509.Certificate, error)  {
-	connection, err := tls.Dial("tcp", address, nil)
+func GetCertificate(address string, novalidate bool) (*x509.Certificate, error)  {
+	connection, err := tls.Dial("tcp", address, &tls.Config{
+		InsecureSkipVerify: novalidate,
+	})
 	defer func(){ if connection != nil { connection.Close() } }()
 	if err != nil {
 		return nil, err

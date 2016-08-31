@@ -1,6 +1,7 @@
 package protocol_common
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"encoding/base64"
@@ -76,4 +77,14 @@ func VerifySignedData(
 	}
 
 	return nil
+}
+
+func Equal(a protobufs.SignedMessage, b protobufs.SignedMessage) bool {
+	return (
+		( (a.Data == nil && b.Data == nil) ||
+			bytes.Equal(a.Data, b.Data) ) &&
+		( (a.PublicKey == nil && b.PublicKey == nil) ||
+		        bytes.Equal(a.PublicKey, b.PublicKey) ) &&
+		( (a.Signature == nil && b.Signature == nil) ||
+		        bytes.Equal(a.PublicKey, b.PublicKey)))
 }

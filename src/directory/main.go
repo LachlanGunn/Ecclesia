@@ -7,11 +7,13 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path"
+	"runtime/pprof"
 	"sort"
 	"time"
 
@@ -20,10 +22,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang/protobuf/proto"
+	"github.com/Sirupsen/logrus"
 	"golang.org/x/crypto/ed25519"
 )
 
-var _ = protobufs.VerifierCommit{}
+var log = logrus.New()
 
 type VerifierCommit struct {
 	PublicKey            ed25519.PublicKey
@@ -115,8 +118,8 @@ func get_allowed_verifiers(filename string) map[string]bool {
 	set := make(map[string]bool)
 	fh, err := os.Open(filename)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not open verifier list.\n")
-		os.Exit(1)
+		log.Fatalf("Could not open verifier list %s.",
+			filename)
 	}
 
 	scanner := bufio.NewScanner(fh)
@@ -143,17 +146,17 @@ func get_keys(secret string) ed25519.PrivateKey {
 		os.Exit(1)
 	}
 
-	fh_secret, error := os.OpenFile(secret, os.O_RDONLY|os.O_CREATE, 0600)
+	fh_secret, error := os.OpenFile(secret, os.O_RDONLY, 0600)
 	if error != nil {
-		fmt.Fprintf(os.Stderr, "Could not open %s\n", secret)
-		os.Exit(1)
+		log.Fatalf("Could not open %s", secret)
 	}
 	defer fh_secret.Close()
 
 	secret_key_bytes, err := ioutil.ReadAll(fh_secret)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not read secret key.\n")
-		os.Exit(1)
+		log.Fatal(os.Stderr,
+			"Could not read secret key from %s: %s",
+			secret, err.Error())
 	}
 
 	secret_key_bytes_decoded, err :=
@@ -171,12 +174,37 @@ func main() {
 	secret := flag.String("key", "", "Secret key input file")
 	directory_log_dir := flag.String("log", "directories/",
 		"Output directory for verifier directories.")
+	verifiers := flag.String("verifiers", "verifiers.conf",
+		"public keys for permitted verifiers")
+	cpuprofile := flag.String("cpuprofile", "", "Write cpu profile to file.")
+	debug := flag.Bool("debug", false, "Set log level to 'debug'.")
+	quiet := flag.Bool("quiet", false, "Only log errors.  Overrides 'debug'.")
 
 	flag.Parse()
 
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatalf("Failed to open profiler output file %s: %s",
+				*cpuprofile, err.Error())
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+
+	if *debug == true {
+		log.Level = logrus.DebugLevel
+	}
+
+	if *quiet == true {
+		log.Level = logrus.ErrorLevel
+	}
+
 	secret_key := get_keys(*secret)
 	
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
+	
 	registration_queue := VerifierCommitList{
 		make(map[string]VerifierCommit, 0),
 		make(chan int, 1),
@@ -196,9 +224,10 @@ func main() {
 		make(chan int, 1)}
 	reveals.OwnerChannel<- 1
 	
-	allowed_verifiers := get_allowed_verifiers("verifiers.conf")
+	allowed_verifiers := get_allowed_verifiers(*verifiers)
 	cycle_times := CycleTimes{}
 	var published_directory []byte
+	var published_commits   []byte
 
 	
 	r.POST("/verifier/commit", func(c *gin.Context) {
@@ -212,7 +241,7 @@ func main() {
 	})
 
 	r.GET("/verifier/list", func(c *gin.Context) {
-		list_verifiers(c, &commits)
+		list_verifiers(c, &published_commits)
 	})
 
 	r.GET("/verifier/published", func(c *gin.Context) {
@@ -223,7 +252,8 @@ func main() {
 
 	go goroutine_commit_reveal_publish_cycle(
 		*cycle, &registration_queue, &commits, &reveals, &cycle_times,
-		&published_directory, secret_key, *directory_log_dir)
+		&published_commits, &published_directory,
+		secret_key, *directory_log_dir)
 	
 	r.Run(":8080")
 }
@@ -238,21 +268,34 @@ func add_verifier(c *gin.Context, list *VerifierCommitList,
 	          allowed_verifiers *map[string]bool,
  	          cycle_times *CycleTimes) {
 
+	logging_context := logrus.Fields{
+		"ClientIP": c.ClientIP() }
+
 	encoded_data, err := ioutil.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(500, gin.H{"result": "fail",
 			"reason": "failed to read request"})
+		logging_context["Error"] = err
+		log.WithFields(logging_context).Error(
+			"add_verifier: failed to read request body")
 		return
 	}
 
 	signed_message, err := protocol_common.UnpackSignedData(
 		encoded_data, func(key ed25519.PublicKey) bool {
-			return check_verifier_allowed(
+			return true || check_verifier_allowed(
 				key, allowed_verifiers)
 		})
 	if err != nil {
 		c.JSON(400, gin.H{"result": "fail",
 			"reason": err.Error()})
+		logging_context["Error"] = err
+		if log.Level >= logrus.DebugLevel {
+			logging_context["EncodedDescriptor"] =
+				base64.StdEncoding.EncodeToString(encoded_data)
+		}
+		log.WithFields(logging_context).Error(
+			"add_verifier: failed to unpack signed blob")
 		return
 	}
 	
@@ -264,8 +307,18 @@ func add_verifier(c *gin.Context, list *VerifierCommitList,
 			"reason": "invalid commitment",
 			"error": err.Error(),
 			"input": signed_message.Data})
+		logging_context["Error"] = err
+		if log.Level >= logrus.DebugLevel {
+			logging_context["SignedDescriptor"] = signed_message
+		}
+		log.WithFields(logging_context).Error(
+			"add_verifier: failed to parse descriptor")
 		return
 	}
+
+	logging_context["PublicKey"] = base64.StdEncoding.EncodeToString(
+		raw_commit.PublicKey)
+	logging_context["AdvertisedAddress"] = raw_commit.Address
 
 	// Convert the protobuf structure to our internal type.
 	// We need to parse the date first though.
@@ -273,6 +326,10 @@ func add_verifier(c *gin.Context, list *VerifierCommitList,
 	if err != nil {
 		c.JSON(400, gin.H{"result": "fail",
 			"reason": "time failed to parse"})
+		logging_context["Error"] = err
+		logging_context["BadTimestamp"] = raw_commit.Time
+		log.WithFields(logging_context).Error(
+			"add_verifier: failed to parse timestamp")
 		return
 	}
 	verifier_data := VerifierCommit{
@@ -288,6 +345,8 @@ func add_verifier(c *gin.Context, list *VerifierCommitList,
 	if !bytes.Equal(verifier_data.PublicKey, signed_message.PublicKey) {
 		c.JSON(403, gin.H{"result": "fail",
 			"reason": "public keys in disagreement"})
+		log.WithFields(logging_context).Error(
+			"add_verifier: Non-matching public keys")
 		return
 	}
 
@@ -302,7 +361,10 @@ func add_verifier(c *gin.Context, list *VerifierCommitList,
 		"RevealWait"     :
 		    -time.Since(commit_cycle_times.NextReveal).Seconds(),
 	        "PublicationWait":
-		    -time.Since(commit_cycle_times.NextPublication).Seconds()})
+		-time.Since(commit_cycle_times.NextPublication).Seconds()})
+
+	log.WithFields(logging_context).Info(
+		"add_verifier: Successful registration")
 }
 
 //
@@ -314,27 +376,43 @@ func add_reveal(
 	reveals *VerifierRevealList,
 	allowed_verifiers *map[string]bool) {
 
+	logging_context := logrus.Fields{
+		"ClientIP": c.ClientIP() }
+
 	// First of all, check that we are within a reveal window.
 	if (!reveal_ready(reveals)) {
 		c.JSON(403, gin.H{"result": "fail",
 			"reason": "outside of reveal window"})
+		log.WithFields(logging_context).Error(
+			"add_reveal: attempt to reveal outside of window")
 		return
 	}
 
-	// Parse the JSON data into a reveal struct.
+	// Parse the ProtoBuf data into a reveal struct.
 	reveal_data_json := c.PostForm("verifier_data")
 
 	reveal := protobufs.VerifierReveal{}
 	err := proto.Unmarshal([]byte(reveal_data_json), &reveal)
 	if (nil != err) {
-		c.JSON(400, gin.H{"result": "fail", "reason": "bad json"})
+		c.JSON(400, gin.H{"result": "fail", "reason": "bad request"})
+		log.WithFields(logging_context).Error(
+			"add_reveal: invalid request")
 		return
+	}
+
+	logging_context["PublicKey"] =
+		base64.StdEncoding.EncodeToString(reveal.PublicKey)
+	if log.Level >= logrus.DebugLevel {
+		logging_context["RevealValue"] =
+			base64.StdEncoding.EncodeToString(reveal.RevealValue)
 	}
 
 	// Next we check whether the verifier is (still) allowed to submit.
 	if !check_verifier_allowed(reveal.PublicKey, allowed_verifiers) {
 		c.JSON(403, gin.H{"result": "fail",
 			"reason": "verifier not whitelisted"})
+		log.WithFields(logging_context).Error(
+			"add_reveal: authorisation failure")
 		return
 	}
 
@@ -346,6 +424,8 @@ func add_reveal(
 		c.JSON(404, gin.H{
 			"result": "fail",
 			"reason": "no commitment registered"})
+		log.WithFields(logging_context).Error(
+			"add_reveal: No corresponding commitment")
 		return
 	}
 	
@@ -356,33 +436,20 @@ func add_reveal(
 	expected_commit_binary := sha256.Sum256(reveal.RevealValue)
 	if !bytes.Equal(expected_commit_binary[:], commit.CommitValue) {
 		c.JSON(403, gin.H{"result": "fail", "reason": "bad reveal"})
+		log.WithFields(logging_context).Error(
+			"add_reveal: Revealed data does not match commitment")
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "Adding reveal\n");
 	reveals.InsertChannel <- reveal
 
 	c.JSON(200, gin.H{"result": "success"})
+	log.WithFields(logging_context).Info(
+		"add_reveal: succesful revelation")
 }
 
-func list_verifiers(c *gin.Context, list *VerifierCommitList) {
-	<-list.OwnerChannel
-	defer func(){list.OwnerChannel<- 1}()
-
-	verifiers := make([][]byte, len(list.Verifiers))
-	i := 0
-	for _, k := range list.Verifiers {
-		encoded_commit, err := proto.Marshal(k.SignedValue)
-		if err != nil {
-			c.JSON(500, gin.H{"result": "fail",
-				"reason":"marshalling error"})
-			return
-		}
-		verifiers[i] = encoded_commit
-		i++
-	}
-	c.JSON(200, verifiers)
-	
+func list_verifiers(c *gin.Context, list *[]byte) {
+	c.Data(200, "application/octet-stream", *list)	
 }
 
 //
@@ -398,6 +465,38 @@ func goroutine_reveal_list_append(list *VerifierRevealList) {
 		list.Reveals[string(new_reveal.PublicKey)] = new_reveal
 		
 		list.OwnerChannel<- 1
+	}
+}
+
+//
+// Produce a commit list for publication.
+//
+func generate_commit_list(list *VerifierCommitList) []byte {
+
+	output_list := protobufs.VerifierCommitList{
+		VerifierCommits: make(
+			[]*protobufs.SignedMessage,
+			len(list.Verifiers))}
+
+	i := 0
+	for _, k := range list.Verifiers {
+		output_list.VerifierCommits[i] = k.SignedValue
+		i++
+	}
+
+	encoded_list, err := proto.Marshal(&output_list)
+	if err != nil {
+		encoded_list, err =
+			proto.Marshal(
+			    &protobufs.VerifierCommitList{
+				    []*protobufs.SignedMessage{}})
+		if err != nil {
+			return []byte{}
+		} else {
+			return encoded_list
+		}
+	} else {
+		return encoded_list
 	}
 }
 
@@ -460,7 +559,6 @@ func generate_verifier_list(
 func store_directory(data []byte, timestamp time.Time, directory string) error {
 	file_path := path.Join(directory, timestamp.Format(
 		"2006-01-02T150405-0700")) + ".dir"
-	fmt.Println(file_path)
 	fh, err := os.OpenFile(file_path, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to open file: %s\n", err.Error())
@@ -505,6 +603,7 @@ func goroutine_commit_reveal_publish_cycle(
 	verifier_commit_list        *VerifierCommitList,
 	verifier_reveal_list        *VerifierRevealList,
 	cycle_times                 *CycleTimes,
+	published_commits           *[]byte,
 	published_directory         *[]byte,
 	secret_key                   ed25519.PrivateKey,
 	output_directory             string) {
@@ -515,7 +614,7 @@ func goroutine_commit_reveal_publish_cycle(
 	// Each iteration is a one-hour cycle.
 	for {
 		// The commit-distribution phase.
-		fmt.Println("Distributing committed values.")
+		log.Info("Phase 1/2, commits outgoing")
 
 		// Move the registration queue to the commit list.
 		// We also need to update the cycle timestamps.
@@ -532,6 +631,7 @@ func goroutine_commit_reveal_publish_cycle(
 
 		verifier_commit_list.Verifiers =
 			verifier_registration_queue.Verifiers
+		*published_commits = generate_commit_list(verifier_commit_list)
 
 		verifier_commit_list.OwnerChannel <- 1
 
@@ -542,8 +642,7 @@ func goroutine_commit_reveal_publish_cycle(
 
 		// The revelation phase.
 		<-tick_channel
-		fmt.Printf("Accepting revealed values (%d).\n",
-			len(verifier_commit_list.Verifiers))
+		log.Info("Phase 2/2, reveals incoming")
 
 		// Empty the previous reveal list.
 		<-verifier_reveal_list.OwnerChannel
@@ -555,9 +654,6 @@ func goroutine_commit_reveal_publish_cycle(
 		
 		// Publication of the commits.
 		<-tick_channel
-		fmt.Printf("Publishing directory (%d/%d).\n",
-			len(verifier_reveal_list.Reveals),
-			len(verifier_commit_list.Verifiers))
 
 		// Indicate that the reveal window is over.
 		// FIXME: Have we locked in the right order?
@@ -571,6 +667,13 @@ func goroutine_commit_reveal_publish_cycle(
 			public_key, secret_key, *published_directory,
 			4*cycle_time)
 
+		directory_fingerprint := sha256.Sum256(*published_directory)
+		log.WithFields(logrus.Fields{
+			"Verifiers": len(verifier_commit_list.Verifiers),
+			"Reveals":   len(verifier_reveal_list.Reveals),
+			"Fingerprint":
+			    hex.EncodeToString(directory_fingerprint[:]),
+		}).Info("Published directory")
 		store_directory(*published_directory, timestamp,
 			output_directory)
 

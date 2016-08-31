@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -40,8 +39,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	var dir directory.Directory
-	err = json.Unmarshal(data, &dir)
+	dir, err := directory.ParseDirectory(data)
 	if err != nil {
 		fmt.Fprintf(os.Stderr,
 			"Could not parse directory: %s\n", err.Error())
@@ -71,8 +69,6 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
 			continue
 		}
-
-		fmt.Fprintln(os.Stderr, base64.StdEncoding.EncodeToString(v.PublicKey))
 
 		_, err = directory.ParseCertificate(body, v.PublicKey)
 		if err != nil {

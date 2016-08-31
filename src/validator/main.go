@@ -16,6 +16,7 @@ import (
 
 func main() {
 	verifier_count := flag.Int("verifiers",10,"Number of verifiers to draw")
+	noca := flag.Bool("noca", false, "do not require a valid certificate chain")
 	flag.Parse()
 	args := flag.Args()
 
@@ -57,8 +58,7 @@ func main() {
 	}
 
 
-	var dir directory.Directory
-	err = json.Unmarshal(data, &dir)
+	dir, err := directory.ParseDirectory(data)
 	if err != nil {
 		fmt.Fprintf(os.Stderr,
 			"Could not parse directory: %s\n", err.Error())
@@ -81,7 +81,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	x509_cert, err := certificate.GetCertificate(args[2])
+	x509_cert, err := certificate.GetCertificate(args[2], *noca)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting certificate: %s\n",
+			err.Error())
+		os.Exit(1)
+	}
 	fingerprint_sha1 := sha1.Sum(x509_cert.Raw)
 	fingerprint_sha256 := sha256.Sum256(x509_cert.Raw)
 
