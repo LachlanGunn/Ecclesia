@@ -41,16 +41,21 @@ func make_certificate(host string) ([]byte, []byte) {
 	}
 
 	certificate_pem := pem.EncodeToMemory(
-		&pem.Block{"CERTIFICATE", nil, certificate_der})
+		&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: certificate_der,
+		})
 	key_pem := pem.EncodeToMemory(
-		&pem.Block{"PRIVATE KEY", nil,
-			x509.MarshalPKCS1PrivateKey(secret_key)})
+		&pem.Block{
+			Type:  "PRIVATE KEY",
+			Bytes: x509.MarshalPKCS1PrivateKey(secret_key),
+		})
 
 	return certificate_pem, key_pem
 }
 
-func server(config tls.Config) {
-	sock_listen, err := tls.Listen("tcp", ":7999", &config)
+func server(config *tls.Config) {
+	sock_listen, err := tls.Listen("tcp", ":7999", config)
 	if err != nil {
 		log.Fatal("Failed to listen on :7999:", err.Error())
 	}
@@ -75,18 +80,10 @@ func main() {
 		log.Fatal("Failed to load key pair")
 	}
 
-	config := tls.Config{
+	server(&tls.Config{
 		Certificates: []tls.Certificate{
-			/*
-			tls.Certificate{
-				Certificate: [][]byte{cert},
-				PrivateKey: *secret_key,
-			},
-                        */
 			cert,
 		},
 		ServerName: "localhost",
-	}
-
-	server(config)
+	})
 }
