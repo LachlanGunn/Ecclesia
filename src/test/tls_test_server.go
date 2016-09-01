@@ -19,14 +19,14 @@ func make_certificate(host string) ([]byte, []byte) {
 			Organization: []string{"Not really an organisation"},
 		},
 		NotBefore: time.Now(),
-		NotAfter: time.Now().Add(time.Hour),
-		KeyUsage: x509.KeyUsageKeyEncipherment  |
-			  x509.KeyUsageDigitalSignature |
-			  x509.KeyUsageCertSign,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		NotAfter:  time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageKeyEncipherment |
+			x509.KeyUsageDigitalSignature |
+			x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
-		DNSNames: []string{ host },
-		IsCA: true,
+		DNSNames:              []string{host},
+		IsCA:                  true,
 	}
 	secret_key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

@@ -17,9 +17,9 @@ func RandomSubset(seed []byte, id []byte, n int, k int) ([]int, error) {
 	if n < k {
 		return nil, errors.New("Not enough choices to select from")
 	}
-	
-	hashed_seed  := sha256.Sum256(seed)
-	hashed_id    := sha256.Sum256(id)
+
+	hashed_seed := sha256.Sum256(seed)
+	hashed_id := sha256.Sum256(id)
 	aes_ctx, err := aes.NewCipher(hashed_seed[:])
 	if err != nil {
 		return nil, err
@@ -28,7 +28,7 @@ func RandomSubset(seed []byte, id []byte, n int, k int) ([]int, error) {
 	ctr := cipher.NewCTR(aes_ctx, hashed_id[0:aes.BlockSize])
 
 	// We use 64-bits of each block
-	zero_bytes   := make([]byte, 8)
+	zero_bytes := make([]byte, 8)
 
 	result := make([]int, k)
 	for i := 0; i < k; {
@@ -39,10 +39,10 @@ func RandomSubset(seed []byte, id []byte, n int, k int) ([]int, error) {
 		// unless the number of verifiers is a power of two.
 		// We fix this by excluding the biased values.
 		value, _ := binary.Uvarint(random_bytes)
-		if value + uint64(n) < value {
+		if value+uint64(n) < value {
 			continue
 		}
-		
+
 		choice := value % uint64(n)
 		exists := func() bool {
 			for j := 0; j < i; j++ {

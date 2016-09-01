@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	verifier_count := flag.Int("verifiers",10,"Number of verifiers to draw")
+	verifier_count := flag.Int("verifiers", 10, "Number of verifiers to draw")
 	flag.Parse()
 	args := flag.Args()
 
@@ -55,9 +55,9 @@ func main() {
 	}
 
 	certificates := make([]json.RawMessage, *verifier_count)
-	for i, v := range(verifiers) {
+	for i, v := range verifiers {
 		response, err := http.PostForm(
-			"http://" + v.Address + "/verify",
+			"http://"+v.Address+"/verify",
 			url.Values{"host": {args[1]}})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())

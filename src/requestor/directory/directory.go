@@ -3,12 +3,12 @@ package directory
 import (
 	"bytes"
 	"crypto/sha256"
-	"errors"
 	"encoding/json"
+	"errors"
 	"time"
-	
-	"golang.org/x/crypto/ed25519"
+
 	"github.com/golang/protobuf/proto"
+	"golang.org/x/crypto/ed25519"
 
 	"protobufs"
 	"requestor/randomset"
@@ -16,8 +16,8 @@ import (
 )
 
 type Certificate struct {
-	Time time.Time
-	Host string
+	Time              time.Time
+	Host              string
 	FingerprintSHA1   string
 	FingerprintSHA256 string
 }
@@ -41,14 +41,14 @@ type directoryBody struct {
 }
 
 type directoryEntry struct {
-	Commit          []byte
-	Reveal          []byte
-	Signature       []byte
+	Commit    []byte
+	Reveal    []byte
+	Signature []byte
 }
 
 type verifierCommit struct {
-	JSON        []byte
-	Signature   []byte
+	JSON      []byte
+	Signature []byte
 }
 
 type verifierCommitBody struct {
@@ -76,7 +76,7 @@ type Directory struct {
 	RandomValue []byte
 }
 
-func ParseCertificate(data []byte, key ed25519.PublicKey) (Certificate,error) {
+func ParseCertificate(data []byte, key ed25519.PublicKey) (Certificate, error) {
 	var certificate_container signedCertificate
 	err := json.Unmarshal(data, &certificate_container)
 	if err != nil {
@@ -90,7 +90,7 @@ func ParseCertificate(data []byte, key ed25519.PublicKey) (Certificate,error) {
 		certificate_container.Signature)
 
 	if !signature_valid {
-		return Certificate{},errors.New("Invalid certificate signature")
+		return Certificate{}, errors.New("Invalid certificate signature")
 	}
 
 	var certificate Certificate
@@ -106,7 +106,7 @@ func ParseDirectory(data []byte) (Directory, error) {
 	output := Directory{}
 
 	directory_container, err := protocol_common.UnpackSignedData(
-		data, func(ed25519.PublicKey)bool{return true})
+		data, func(ed25519.PublicKey) bool { return true })
 	if err != nil {
 		return output, errors.New("Invalid directory")
 	}
@@ -136,7 +136,7 @@ func ParseDirectory(data []byte) (Directory, error) {
 		}
 		err = protocol_common.VerifySignedData(
 			*directory_entry.VerifierCommit,
-			func(key ed25519.PublicKey)bool{return true})
+			func(key ed25519.PublicKey) bool { return true })
 		if err != nil {
 			return output, errors.New("invalid verifier")
 		}

@@ -16,9 +16,9 @@ import (
 	"protobufs"
 	"shared/protocol_common"
 
-	"golang.org/x/crypto/ed25519"
 	"github.com/Sirupsen/logrus"
 	"github.com/golang/protobuf/proto"
+	"golang.org/x/crypto/ed25519"
 )
 
 type CommitResult struct {
@@ -43,7 +43,7 @@ func get_randomness() ([]byte, []byte) {
 	}
 
 	commit_bytes := sha256.Sum256(reveal_bytes)
-	
+
 	return commit_bytes[:], reveal_bytes
 }
 
@@ -69,7 +69,7 @@ func Register(directory string, secret_key ed25519.PrivateKey,
 	url_base := fmt.Sprintf("http://%s/verifier", directory)
 
 	public_key := secret_key.Public().(ed25519.PublicKey)
-	
+
 	commit, reveal := get_randomness()
 
 	fingerprint, err := get_directory_fingerprint(
@@ -97,7 +97,7 @@ func Register(directory string, secret_key ed25519.PrivateKey,
 		return err
 	}
 
-	response, err := http.Post(url_base + "/commit",
+	response, err := http.Post(url_base+"/commit",
 		"application/octet-string",
 		bytes.NewReader(commitment_encoded))
 	if err != nil {
@@ -120,7 +120,7 @@ func Register(directory string, secret_key ed25519.PrivateKey,
 
 	if result.Result != "success" {
 		error_string := fmt.Sprintf(
-			"Commit failure: %s\n",	result.Reason)
+			"Commit failure: %s\n", result.Reason)
 		return errors.New(error_string)
 	}
 
@@ -133,8 +133,8 @@ func Register(directory string, secret_key ed25519.PrivateKey,
 	// Download the committed values.
 	time_to_wait_for_distribute :=
 		0.5*result.DistributeWait + 0.5*result.RevealWait
-	time.Sleep(time.Duration(time_to_wait_for_distribute)*time.Second)
-	response, err = http.Get(url_base+"/list")
+	time.Sleep(time.Duration(time_to_wait_for_distribute) * time.Second)
+	response, err = http.Get(url_base + "/list")
 	if err != nil {
 		return err
 	}
@@ -160,8 +160,8 @@ func Register(directory string, secret_key ed25519.PrivateKey,
 			*registrations.VerifierCommits[i],
 			signed_commitment) {
 
-				our_position = i
-				break
+			our_position = i
+			break
 		}
 	}
 
@@ -169,22 +169,21 @@ func Register(directory string, secret_key ed25519.PrivateKey,
 		return errors.New("Commit did not appear in published list.")
 	}
 
-
 	our_published_commit := registrations.VerifierCommits[our_position]
 
 	err = protocol_common.VerifySignedData(
 		*our_published_commit,
-		func(k ed25519.PublicKey)bool{return true})
+		func(k ed25519.PublicKey) bool { return true })
 	if err != nil {
 		return errors.New("Published commit did not validate.")
 	}
 
 	// Reveal the committed value
 	time.Sleep(time.Duration(
-		result.RevealWait-result.DistributeWait)*time.Second)
+		result.RevealWait-result.DistributeWait) * time.Second)
 
 	response, err = http.PostForm(url_base+"/reveal",
-		url.Values{"verifier_data" : {string(reveal_request_json)}})
+		url.Values{"verifier_data": {string(reveal_request_json)}})
 	log.Info("Revealed committed value")
 
 	if err != nil {

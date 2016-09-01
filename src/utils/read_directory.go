@@ -3,16 +3,16 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
-	"flag"
-	"fmt"
 	"encoding/base64"
 	"encoding/hex"
+	"flag"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"time"
-	
-	"golang.org/x/crypto/ed25519"
+
 	"github.com/golang/protobuf/proto"
+	"golang.org/x/crypto/ed25519"
 
 	"protobufs"
 	"requestor/randomset"
@@ -39,14 +39,14 @@ type DirectoryBody struct {
 }
 
 type DirectoryEntry struct {
-	Commit          []byte
-	Reveal          []byte
-	Signature       []byte
+	Commit    []byte
+	Reveal    []byte
+	Signature []byte
 }
 
 type VerifierCommit struct {
-	JSON        []byte
-	Signature   []byte
+	JSON      []byte
+	Signature []byte
 }
 
 type VerifierReveal struct {
@@ -61,7 +61,6 @@ type Verifier struct {
 	CommitValue []byte
 }
 
-
 func main() {
 	k := flag.Int("k", 1, "Verifiers needed per certificate")
 	flag.Parse()
@@ -70,7 +69,7 @@ func main() {
 	if len(args) < 1 {
 		fmt.Fprintf(os.Stderr,
 			"USAGE: read_directory [-k <verifiers>] <directory> "+
-			"<identity> <identity> ...\n")
+				"<identity> <identity> ...\n")
 		os.Exit(1)
 	}
 
@@ -89,9 +88,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Could not read directory file.\n")
 		os.Exit(1)
 	}
-		
+
 	directory_container, err := protocol_common.UnpackSignedData(
-		data, func(ed25519.PublicKey)bool{return true})
+		data, func(ed25519.PublicKey) bool { return true })
 	if err != nil {
 		switch err.(type) {
 		case protocol_common.BadSignatureError:
@@ -122,7 +121,6 @@ func main() {
 		directory.Validity,
 		directory.Time)
 
-
 	fmt.Printf("Found %d verifiers.\n", len(directory.DirectoryEntries))
 
 	var verifier_commit_prev protobufs.VerifierCommit
@@ -145,7 +143,7 @@ func main() {
 			default:
 				fmt.Printf("Signature package: invalid (%s)\n",
 					err.Error())
-				
+
 				reveal_valid = false
 				continue
 			}

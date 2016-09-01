@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	verifier_count := flag.Int("verifiers",10,"Number of verifiers to draw")
+	verifier_count := flag.Int("verifiers", 10, "Number of verifiers to draw")
 	flag.Parse()
 	args := flag.Args()
 
@@ -57,7 +57,7 @@ func main() {
 				"Error selecting verifiers: %s\n", err.Error())
 			continue
 		}
-		for _, v := range(verifiers) {
+		for _, v := range verifiers {
 			fmt.Printf("    %s\n", v.Address)
 		}
 	}

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	
+
 	"github.com/golang/protobuf/proto"
 
 	"protobufs"
@@ -18,7 +18,7 @@ func main() {
 
 	if *write {
 		to_marshal := protobufs.VerifierReveal{
-			[]byte{0x01,0x02,0x03,0x04,0x05},
+			[]byte{0x01, 0x02, 0x03, 0x04, 0x05},
 			[]byte{0x09, 0x08, 0x07, 0x06}}
 
 		revelation, err := proto.Marshal(&to_marshal)

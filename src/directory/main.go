@@ -20,9 +20,9 @@ import (
 	"protobufs"
 	"shared/protocol_common"
 
+	"github.com/Sirupsen/logrus"
 	"github.com/gin-gonic/gin"
 	"github.com/golang/protobuf/proto"
-	"github.com/Sirupsen/logrus"
 	"golang.org/x/crypto/ed25519"
 )
 
@@ -62,12 +62,12 @@ type CycleTimes struct {
 }
 
 type DirectoryEntry struct {
-	Commit          VerifierCommit
-	Reveal          protobufs.VerifierReveal
+	Commit VerifierCommit
+	Reveal protobufs.VerifierReveal
 }
 
 type SignedValue struct {
-	JSON []byte
+	JSON      []byte
 	Signature []byte
 }
 
@@ -90,15 +90,15 @@ func (slice Directory) Swap(i, j int) {
 
 // Implement append functionality for the commit and reveal lists.
 func (list *VerifierCommitList) Add(commit VerifierCommit,
-	                            cycle_times *CycleTimes) CycleTimes {
+	cycle_times *CycleTimes) CycleTimes {
 	<-list.OwnerChannel
 	list.Verifiers[string(commit.PublicKey)] = commit
-	
+
 	// We make a copy of the cycle times since this needs to
 	// be done atomically with list interactions.
 	commit_cycle_times := *cycle_times
-	
-	list.OwnerChannel<- 1
+
+	list.OwnerChannel <- 1
 
 	return commit_cycle_times
 }
@@ -106,7 +106,7 @@ func (list *VerifierCommitList) Add(commit VerifierCommit,
 func (list *VerifierRevealList) Add(reveal protobufs.VerifierReveal) {
 	<-list.OwnerChannel
 	list.Reveals[string(reveal.PublicKey)] = reveal
-	list.OwnerChannel<- 1	
+	list.OwnerChannel <- 1
 }
 
 // Determine whether or not we are in the reveal phase.
@@ -202,35 +202,34 @@ func main() {
 	}
 
 	secret_key := get_keys(*secret)
-	
+
 	r := gin.New()
 	r.Use(gin.Recovery())
-	
+
 	registration_queue := VerifierCommitList{
 		make(map[string]VerifierCommit, 0),
 		make(chan int, 1),
 		make(chan VerifierCommit, 100)}
-	registration_queue.OwnerChannel<- 1
+	registration_queue.OwnerChannel <- 1
 
 	commits := VerifierCommitList{
 		make(map[string]VerifierCommit, 0),
 		make(chan int, 1),
 		make(chan VerifierCommit, 100)}
-	commits.OwnerChannel<- 1
+	commits.OwnerChannel <- 1
 
 	reveals := VerifierRevealList{
 		make(map[string]protobufs.VerifierReveal, 0),
 		make(chan int, 1),
 		make(chan protobufs.VerifierReveal, 100),
 		make(chan int, 1)}
-	reveals.OwnerChannel<- 1
-	
+	reveals.OwnerChannel <- 1
+
 	allowed_verifiers := get_allowed_verifiers(*verifiers)
 	cycle_times := CycleTimes{}
 	var published_directory []byte
-	var published_commits   []byte
+	var published_commits []byte
 
-	
 	r.POST("/verifier/commit", func(c *gin.Context) {
 		add_verifier(
 			c, &registration_queue,
@@ -255,22 +254,22 @@ func main() {
 		*cycle, &registration_queue, &commits, &reveals, &cycle_times,
 		&published_commits, &published_directory,
 		secret_key, *directory_log_dir)
-	
+
 	r.Run(*bind)
 }
 
 func check_verifier_allowed(public_key ed25519.PublicKey,
-	                    allowed_verifiers *map[string]bool) bool {
+	allowed_verifiers *map[string]bool) bool {
 	_, found := (*allowed_verifiers)[string(public_key)]
 	return found
 }
 
 func add_verifier(c *gin.Context, list *VerifierCommitList,
-	          allowed_verifiers *map[string]bool,
- 	          cycle_times *CycleTimes) {
+	allowed_verifiers *map[string]bool,
+	cycle_times *CycleTimes) {
 
 	logging_context := logrus.Fields{
-		"ClientIP": c.ClientIP() }
+		"ClientIP": c.ClientIP()}
 
 	encoded_data, err := ioutil.ReadAll(c.Request.Body)
 	if err != nil {
@@ -299,15 +298,15 @@ func add_verifier(c *gin.Context, list *VerifierCommitList,
 			"add_verifier: failed to unpack signed blob")
 		return
 	}
-	
+
 	// Now we parse the commitment data.
 	var raw_commit protobufs.VerifierCommit
 	err = proto.Unmarshal(signed_message.Data, &raw_commit)
-	if (err != nil) {
+	if err != nil {
 		c.JSON(400, gin.H{"result": "fail",
 			"reason": "invalid commitment",
-			"error": err.Error(),
-			"input": signed_message.Data})
+			"error":  err.Error(),
+			"input":  signed_message.Data})
 		logging_context["Error"] = err
 		if log.Level >= logrus.DebugLevel {
 			logging_context["SignedDescriptor"] = signed_message
@@ -334,12 +333,12 @@ func add_verifier(c *gin.Context, list *VerifierCommitList,
 		return
 	}
 	verifier_data := VerifierCommit{
-		PublicKey:   raw_commit.PublicKey,
-		Address:     raw_commit.Address,
-		Time:        timestamp,
-		CommitValue: raw_commit.CommitValue,
+		PublicKey:            raw_commit.PublicKey,
+		Address:              raw_commit.Address,
+		Time:                 timestamp,
+		CommitValue:          raw_commit.CommitValue,
 		DirectoryFingerprint: raw_commit.DirectoryFingerprint,
-		SignedValue: signed_message}
+		SignedValue:          signed_message}
 
 	// Check whether the public key matches the one that we used
 	// to verify the signature.
@@ -351,18 +350,15 @@ func add_verifier(c *gin.Context, list *VerifierCommitList,
 		return
 	}
 
-	// The verification done, we insert the new verifier into the list.	
+	// The verification done, we insert the new verifier into the list.
 	commit_cycle_times := list.Add(verifier_data, cycle_times)
 
 	// FIXME: Not thread-safe
 	c.JSON(200, gin.H{
-		"result"         : "success",
-		"DistributeWait" :
-		    -time.Since(commit_cycle_times.NextDistribution).Seconds(),
-		"RevealWait"     :
-		    -time.Since(commit_cycle_times.NextReveal).Seconds(),
-	        "PublicationWait":
-		-time.Since(commit_cycle_times.NextPublication).Seconds()})
+		"result":          "success",
+		"DistributeWait":  -time.Since(commit_cycle_times.NextDistribution).Seconds(),
+		"RevealWait":      -time.Since(commit_cycle_times.NextReveal).Seconds(),
+		"PublicationWait": -time.Since(commit_cycle_times.NextPublication).Seconds()})
 
 	log.WithFields(logging_context).Info(
 		"add_verifier: Successful registration")
@@ -372,16 +368,16 @@ func add_verifier(c *gin.Context, list *VerifierCommitList,
 // HTTP request handler for the reveal process.
 //
 func add_reveal(
-	c       *gin.Context,
+	c *gin.Context,
 	commits *VerifierCommitList,
 	reveals *VerifierRevealList,
 	allowed_verifiers *map[string]bool) {
 
 	logging_context := logrus.Fields{
-		"ClientIP": c.ClientIP() }
+		"ClientIP": c.ClientIP()}
 
 	// First of all, check that we are within a reveal window.
-	if (!reveal_ready(reveals)) {
+	if !reveal_ready(reveals) {
 		c.JSON(403, gin.H{"result": "fail",
 			"reason": "outside of reveal window"})
 		log.WithFields(logging_context).Error(
@@ -394,7 +390,7 @@ func add_reveal(
 
 	reveal := protobufs.VerifierReveal{}
 	err := proto.Unmarshal([]byte(reveal_data_json), &reveal)
-	if (nil != err) {
+	if nil != err {
 		c.JSON(400, gin.H{"result": "fail", "reason": "bad request"})
 		log.WithFields(logging_context).Error(
 			"add_reveal: invalid request")
@@ -429,8 +425,8 @@ func add_reveal(
 			"add_reveal: No corresponding commitment")
 		return
 	}
-	
-	commits.OwnerChannel<- 1
+
+	commits.OwnerChannel <- 1
 
 	// Next check that the reveal matches the commit.  It is because
 	// of this check that we don't need to authenticate.
@@ -450,7 +446,7 @@ func add_reveal(
 }
 
 func list_verifiers(c *gin.Context, list *[]byte) {
-	c.Data(200, "application/octet-stream", *list)	
+	c.Data(200, "application/octet-stream", *list)
 }
 
 //
@@ -464,8 +460,8 @@ func goroutine_reveal_list_append(list *VerifierRevealList) {
 		<-list.OwnerChannel
 
 		list.Reveals[string(new_reveal.PublicKey)] = new_reveal
-		
-		list.OwnerChannel<- 1
+
+		list.OwnerChannel <- 1
 	}
 }
 
@@ -489,8 +485,8 @@ func generate_commit_list(list *VerifierCommitList) []byte {
 	if err != nil {
 		encoded_list, err =
 			proto.Marshal(
-			    &protobufs.VerifierCommitList{
-				    []*protobufs.SignedMessage{}})
+				&protobufs.VerifierCommitList{
+					[]*protobufs.SignedMessage{}})
 		if err != nil {
 			return []byte{}
 		} else {
@@ -599,18 +595,18 @@ func store_directory(data []byte, timestamp time.Time, directory string) error {
 // verifier list, which is then signed and distributed.
 //
 func goroutine_commit_reveal_publish_cycle(
-	cycle_time                   time.Duration,
+	cycle_time time.Duration,
 	verifier_registration_queue *VerifierCommitList,
-	verifier_commit_list        *VerifierCommitList,
-	verifier_reveal_list        *VerifierRevealList,
-	cycle_times                 *CycleTimes,
-	published_commits           *[]byte,
-	published_directory         *[]byte,
-	secret_key                   ed25519.PrivateKey,
-	output_directory             string) {
+	verifier_commit_list *VerifierCommitList,
+	verifier_reveal_list *VerifierRevealList,
+	cycle_times *CycleTimes,
+	published_commits *[]byte,
+	published_directory *[]byte,
+	secret_key ed25519.PrivateKey,
+	output_directory string) {
 
 	tick_channel := time.NewTicker(cycle_time).C
-	public_key   := secret_key.Public().(ed25519.PublicKey)
+	public_key := secret_key.Public().(ed25519.PublicKey)
 
 	// Each iteration is a one-hour cycle.
 	for {
@@ -623,12 +619,11 @@ func goroutine_commit_reveal_publish_cycle(
 		<-verifier_commit_list.OwnerChannel
 
 		cycle_times.NextDistribution =
-			time.Now().Add(2*cycle_time);
+			time.Now().Add(2 * cycle_time)
 		cycle_times.NextReveal =
-			time.Now().Add(3*cycle_time);
+			time.Now().Add(3 * cycle_time)
 		cycle_times.NextPublication =
-			time.Now().Add(4*cycle_time);
-
+			time.Now().Add(4 * cycle_time)
 
 		verifier_commit_list.Verifiers =
 			verifier_registration_queue.Verifiers
@@ -652,7 +647,7 @@ func goroutine_commit_reveal_publish_cycle(
 
 		// Indicate that we are ready to accept revelations.
 		verifier_reveal_list.Ready <- 1
-		
+
 		// Publication of the commits.
 		<-tick_channel
 
@@ -670,10 +665,9 @@ func goroutine_commit_reveal_publish_cycle(
 
 		directory_fingerprint := sha256.Sum256(*published_directory)
 		log.WithFields(logrus.Fields{
-			"Verifiers": len(verifier_commit_list.Verifiers),
-			"Reveals":   len(verifier_reveal_list.Reveals),
-			"Fingerprint":
-			    hex.EncodeToString(directory_fingerprint[:]),
+			"Verifiers":   len(verifier_commit_list.Verifiers),
+			"Reveals":     len(verifier_reveal_list.Reveals),
+			"Fingerprint": hex.EncodeToString(directory_fingerprint[:]),
 		}).Info("Published directory")
 		store_directory(*published_directory, timestamp,
 			output_directory)

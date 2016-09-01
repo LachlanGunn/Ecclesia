@@ -4,8 +4,8 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
-	"os"
 	"golang.org/x/crypto/ed25519"
+	"os"
 )
 
 func main() {

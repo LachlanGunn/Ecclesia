@@ -15,8 +15,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/Sirupsen/logrus"
+	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/ed25519"
 )
 
@@ -24,10 +24,10 @@ var log = logrus.New()
 
 func main() {
 	directory := flag.String("directory", "localhost:8080", "directory server")
-	secret    := flag.String("key", "", "secret key input file")
-	bind      := flag.String("bind", ":8081", "bind address/port")
+	secret := flag.String("key", "", "secret key input file")
+	bind := flag.String("bind", ":8081", "bind address/port")
 	advertise := flag.String("advertise", "", "advertised address/port")
-	novalidate:= flag.Bool("novalidate", false, "do not validate certificates")
+	novalidate := flag.Bool("novalidate", false, "do not validate certificates")
 	debug := flag.Bool("debug", false, "log debugging information.")
 	quiet := flag.Bool("quiet", false, "only log errors.  Overrides -debug.")
 	flag.Parse()
@@ -40,7 +40,6 @@ func main() {
 		log.Level = logrus.ErrorLevel
 	}
 
-	
 	secret_key := get_keys(*secret)
 
 	r := gin.New()
@@ -114,7 +113,7 @@ func certificate_report(c *gin.Context, secret_key ed25519.PrivateKey,
 	}
 
 	logging_context["HostToVerify"] = host
-	
+
 	certificate, err := certificate.GetCertificate(host, novalidate)
 	if err != nil {
 		logging_context["Error"] = err
@@ -130,15 +129,15 @@ func certificate_report(c *gin.Context, secret_key ed25519.PrivateKey,
 
 	fingerprint_sha256 := sha256.Sum256(certificate.Raw)
 	fingerprint_sha256_hex := hex.EncodeToString(fingerprint_sha256[:])
-	
-	certificate_contents_json, err := json.Marshal(struct{
-		Time time.Time
-		Host string
+
+	certificate_contents_json, err := json.Marshal(struct {
+		Time              time.Time
+		Host              string
 		FingerprintSHA1   string
 		FingerprintSHA256 string
 	}{time.Now(), host, fingerprint_hex, fingerprint_sha256_hex})
 
-	certificate_json, err := json.Marshal(struct{
+	certificate_json, err := json.Marshal(struct {
 		Certificate []byte
 		Signature   []byte
 	}{certificate_contents_json,
@@ -155,7 +154,7 @@ func goroutine_registration(
 	bind_address string) {
 
 	first := true
-	
+
 	for {
 		err := registration.Register(
 			directory, secret_key, bind_address, first, log)
@@ -165,7 +164,7 @@ func goroutine_registration(
 			log.WithFields(logrus.Fields{
 				"Error": err,
 			}).Error("Registration error.")
-			time.Sleep(5*time.Second)
+			time.Sleep(5 * time.Second)
 		}
 	}
 }

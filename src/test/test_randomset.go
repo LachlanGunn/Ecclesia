@@ -7,9 +7,9 @@ import (
 )
 
 func order_to_number(order []int) int {
-	base := order[0]*2
+	base := order[0] * 2
 	if order[1] < order[2] {
-		return base+1
+		return base + 1
 	} else {
 		return base
 	}
@@ -26,7 +26,7 @@ func main() {
 		subset, err := randomset.RandomSubset(
 			seed, []byte(identity), 3, 3)
 		if err == nil {
-			index  := order_to_number(subset)
+			index := order_to_number(subset)
 			results[index]++
 		}
 	}

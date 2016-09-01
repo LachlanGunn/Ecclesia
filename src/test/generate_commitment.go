@@ -9,8 +9,8 @@ import (
 
 	"protobufs"
 
-	"golang.org/x/crypto/ed25519"
 	"github.com/golang/protobuf/proto"
+	"golang.org/x/crypto/ed25519"
 )
 
 func get_randomness() ([]byte, []byte) {
@@ -22,10 +22,9 @@ func get_randomness() ([]byte, []byte) {
 	}
 
 	commit_bytes := sha256.Sum256(reveal_bytes)
-	
+
 	return commit_bytes[:], reveal_bytes
 }
-
 
 func main() {
 	public_key, secret_key, err := ed25519.GenerateKey(nil)
@@ -37,7 +36,6 @@ func main() {
 	commit, _ := get_randomness()
 
 	fingerprint := sha256.Sum256([]byte{})
-
 
 	verifier_object := protobufs.VerifierCommit{
 		public_key,

@@ -2,12 +2,12 @@ package protocol_common
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
-	"encoding/base64"
 
-	"golang.org/x/crypto/ed25519"
 	"github.com/golang/protobuf/proto"
+	"golang.org/x/crypto/ed25519"
 
 	"protobufs"
 )
@@ -30,13 +30,14 @@ func (k *UntrustedPublicKeyError) Error() string {
 		base64.StdEncoding.EncodeToString(k.Key))
 }
 
-type BadSignatureError struct {}
+type BadSignatureError struct{}
+
 func (err BadSignatureError) Error() string {
 	return "Signature not valid"
 }
 
 func UnpackSignedData(
-	signed_data []byte, validate_public_key func(ed25519.PublicKey) bool ) (
+	signed_data []byte, validate_public_key func(ed25519.PublicKey) bool) (
 	*protobufs.SignedMessage, error) {
 
 	var signed_message protobufs.SignedMessage
@@ -63,7 +64,7 @@ func VerifySignedData(
 
 	public_key := ed25519.PublicKey(signed_message.PublicKey)
 	if !validate_public_key(public_key) {
-		return&UntrustedPublicKeyError{public_key}
+		return &UntrustedPublicKeyError{public_key}
 	}
 
 	if len(signed_message.Signature) != ed25519.SignatureSize {
@@ -80,11 +81,10 @@ func VerifySignedData(
 }
 
 func Equal(a protobufs.SignedMessage, b protobufs.SignedMessage) bool {
-	return (
-		( (a.Data == nil && b.Data == nil) ||
-			bytes.Equal(a.Data, b.Data) ) &&
-		( (a.PublicKey == nil && b.PublicKey == nil) ||
-		        bytes.Equal(a.PublicKey, b.PublicKey) ) &&
-		( (a.Signature == nil && b.Signature == nil) ||
-		        bytes.Equal(a.PublicKey, b.PublicKey)))
+	return (((a.Data == nil && b.Data == nil) ||
+		bytes.Equal(a.Data, b.Data)) &&
+		((a.PublicKey == nil && b.PublicKey == nil) ||
+			bytes.Equal(a.PublicKey, b.PublicKey)) &&
+		((a.Signature == nil && b.Signature == nil) ||
+			bytes.Equal(a.PublicKey, b.PublicKey)))
 }
