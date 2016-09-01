@@ -14,7 +14,7 @@ validate="$src_path/validator/validate"
 
 export GIN_MODE=release
 
-trap 'kill -TERM $PIDS $PID_DIRECTORY $PID_TEST_SERVER' TERM INT
+trap 'kill -TERM $PIDS $PID_DIRECTORY $PID_TEST_SERVER; rm -rf $work_path' TERM INT
 
 PIDS=''
 
@@ -32,7 +32,7 @@ for i in $(seq $verifier_count); do
 done
 
 $directory -key "$work_path/keys/directory.sec.key" \
-	   -cycle=3s \
+	   -cycle=10s \
 	   -log "$work_path/out/" \
 	   -verifiers "$work_path/verifiers.conf" \
 	   -quiet &
@@ -70,13 +70,14 @@ while [ $verifiers_included -lt $verifier_count ]; do
 done
 >&2 echo 'done.'
 
+>&2 echo -n '---[1/3]--- Producing certificate...'
+
 $tls_test_server &
 PID_TEST_SERVER=$!
 
 sleep 1
 
 verification_count=$(expr $verifier_count / 2)
->&2 echo -n '---[1/3]--- Requesting certificate...'
 $requestor -verifiers $verification_count $directory_file localhost:7999 \
 	>"$work_path/certificate.cert"
 if [ $? -ne 0 ]; then
@@ -98,13 +99,13 @@ fi
 
 >&2 echo 'PASS.'
 
+>&2 echo -n '---[3/3]--- Checking MITM behaviour...'
 kill -TERM $PID_TEST_SERVER
 $tls_test_server &
 PID_TEST_SERVER=$!
 
 sleep 1
 
->&2 echo -n '---[3/3]--- Checking MITM behaviour...'
 $validate -verifiers $verification_count -noca \
 	$directory_file "$work_path/certificate.cert" localhost:7999 2>/dev/null
 
