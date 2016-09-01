@@ -170,6 +170,7 @@ func get_keys(secret string) ed25519.PrivateKey {
 }
 
 func main() {
+	bind := flag.String("bind", ":8080", "<address>:<port> to bind to.")
 	cycle := flag.Duration("cycle", time.Hour, "Commit/reveal cycle time.")
 	secret := flag.String("key", "", "Secret key input file")
 	directory_log_dir := flag.String("log", "directories/",
@@ -255,7 +256,7 @@ func main() {
 		&published_commits, &published_directory,
 		secret_key, *directory_log_dir)
 	
-	r.Run(":8080")
+	r.Run(*bind)
 }
 
 func check_verifier_allowed(public_key ed25519.PublicKey,

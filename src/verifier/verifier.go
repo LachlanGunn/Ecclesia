@@ -23,12 +23,13 @@ import (
 var log = logrus.New()
 
 func main() {
+	directory := flag.String("directory", "localhost:8080", "directory server")
 	secret    := flag.String("key", "", "secret key input file")
 	bind      := flag.String("bind", ":8081", "bind address/port")
 	advertise := flag.String("advertise", "", "advertised address/port")
 	novalidate:= flag.Bool("novalidate", false, "do not validate certificates")
-	debug := flag.Bool("debug", false, "Log debugging information.")
-	quiet := flag.Bool("quiet", false, "Only log errors.  Overrides -debug.")
+	debug := flag.Bool("debug", false, "log debugging information.")
+	quiet := flag.Bool("quiet", false, "only log errors.  Overrides -debug.")
 	flag.Parse()
 
 	if *debug == true {
@@ -53,7 +54,7 @@ func main() {
 		*advertise = *bind
 	}
 
-	go goroutine_registration(secret_key, *advertise)
+	go goroutine_registration(*directory, secret_key, *advertise)
 
 	r.Run(*bind)
 }
@@ -149,6 +150,7 @@ func certificate_report(c *gin.Context, secret_key ed25519.PrivateKey,
 }
 
 func goroutine_registration(
+	directory string,
 	secret_key ed25519.PrivateKey,
 	bind_address string) {
 
@@ -156,7 +158,7 @@ func goroutine_registration(
 	
 	for {
 		err := registration.Register(
-			secret_key, bind_address, first, log)
+			directory, secret_key, bind_address, first, log)
 		first = false
 
 		if err != nil {

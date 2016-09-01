@@ -21,19 +21,6 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
-type Verifier struct {
-	PublicKey        string
-	Address          string
-	Time             time.Time
-	CommitValue      string
-	VisibleDirectory []byte
-}
-
-type SignedValue struct {
-	JSON []byte
-	Signature []byte
-}
-
 type CommitResult struct {
 	Result          string
 	Reason          string
@@ -76,15 +63,17 @@ func get_directory_fingerprint(url string) ([]byte, error) {
 	return fingerprint[:], nil
 }
 
-func Register(secret_key ed25519.PrivateKey, address string, first bool,
-	log *logrus.Logger) error {
+func Register(directory string, secret_key ed25519.PrivateKey,
+	address string, first bool, log *logrus.Logger) error {
+
+	url_base := fmt.Sprintf("http://%s/verifier", directory)
 
 	public_key := secret_key.Public().(ed25519.PublicKey)
 	
 	commit, reveal := get_randomness()
 
 	fingerprint, err := get_directory_fingerprint(
-		"http://localhost:8080/verifier/published")
+		url_base + "/published")
 	if err != nil {
 		return err
 	}
@@ -108,8 +97,9 @@ func Register(secret_key ed25519.PrivateKey, address string, first bool,
 		return err
 	}
 
-	response, err := http.Post("http://localhost:8080/verifier/commit",
-		"application/octet-string", bytes.NewReader(commitment_encoded))
+	response, err := http.Post(url_base + "/commit",
+		"application/octet-string",
+		bytes.NewReader(commitment_encoded))
 	if err != nil {
 		return err
 	}
@@ -144,7 +134,7 @@ func Register(secret_key ed25519.PrivateKey, address string, first bool,
 	time_to_wait_for_distribute :=
 		0.5*result.DistributeWait + 0.5*result.RevealWait
 	time.Sleep(time.Duration(time_to_wait_for_distribute)*time.Second)
-	response, err = http.Get("http://localhost:8080/verifier/list")
+	response, err = http.Get(url_base+"/list")
 	if err != nil {
 		return err
 	}
@@ -193,7 +183,7 @@ func Register(secret_key ed25519.PrivateKey, address string, first bool,
 	time.Sleep(time.Duration(
 		result.RevealWait-result.DistributeWait)*time.Second)
 
-	response, err = http.PostForm("http://localhost:8080/verifier/reveal",
+	response, err = http.PostForm(url_base+"/reveal",
 		url.Values{"verifier_data" : {string(reveal_request_json)}})
 	log.Info("Revealed committed value")
 

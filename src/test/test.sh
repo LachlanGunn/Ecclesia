@@ -31,7 +31,8 @@ for i in $(seq $verifier_count); do
     echo >> "$work_path/verifiers.conf"
 done
 
-$directory -key "$work_path/keys/directory.sec.key" \
+$directory -bind :7998 \
+           -key "$work_path/keys/directory.sec.key" \
 	   -cycle=10s \
 	   -log "$work_path/out/" \
 	   -verifiers "$work_path/verifiers.conf" \
@@ -40,7 +41,8 @@ PID_DIRECTORY="$!"
 sleep 1
 
 for i in $(seq $verifier_count); do
-    $verifier -key "$work_path/keys/verifier$i.sec.key" \
+    $verifier -directory localhost:7998 \
+	      -key "$work_path/keys/verifier$i.sec.key" \
 	      -bind :$((8080+i)) \
 	      -advertise localhost:$((8080+i)) \
 	      -quiet -novalidate &
