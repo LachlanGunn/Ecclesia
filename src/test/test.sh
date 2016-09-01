@@ -61,7 +61,7 @@ while [ $verifiers_included -lt $verifier_count ]; do
 				 | grep '^Found [0-9]* verifiers.$' \
 				 | awk '{print $2}')
 	fi
-	if [ $time_waiting -gt 60 ]; then
+	if [ $time_waiting -gt 90 ]; then
 		>&2 echo 'timeout.'
 		kill -TERM $PIDS $PID_DIRECTORY
 		exit 1
