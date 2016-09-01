@@ -446,7 +446,7 @@ func add_reveal(
 
 	c.JSON(200, gin.H{"result": "success"})
 	log.WithFields(logging_context).Info(
-		"add_reveal: succesful revelation")
+		"add_reveal: successful revelation")
 }
 
 func list_verifiers(c *gin.Context, list *[]byte) {
