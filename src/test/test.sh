@@ -1,6 +1,10 @@
 #!/bin/bash
 
 verifier_count=$1
+if [ -z $verifier_count ]; then
+        verifier_count=5
+fi
+
 src_path="$(realpath $(dirname $(realpath $0))/..)"
 work_path="$(mktemp -d)"
 
@@ -33,7 +37,7 @@ done
 
 $directory -bind :7998 \
            -key "$work_path/keys/directory.sec.key" \
-	   -cycle=10s \
+	   -cycle=3s \
 	   -log "$work_path/out/" \
 	   -verifiers "$work_path/verifiers.conf" \
 	   -quiet &
